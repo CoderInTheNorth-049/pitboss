@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PITBOSS — arena roguelite FPS</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>🤖</text></svg>" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="game-canvas"></canvas>
+
+    <div id="hud" class="layer hidden">
+      <div id="crosshair"><span class="ch-dot"></span><span class="ch-ring"></span><span id="hitmarker"></span></div>
+      <div id="vignette"></div>
+      <div id="hp-wrap"><span class="stat-label">VITALS</span><div id="hp-bar"><div id="hp-fill"></div></div></div>
+      <div id="ammo-wrap"><span id="ammo-count">30</span><span class="stat-label">/ ∞</span><div id="reload-hint" class="hidden">RELOADING</div></div>
+      <div id="special-wrap" class="hidden"><span id="special-name"></span><div id="special-bar"><div id="special-fill"></div></div></div>
+      <div id="wave-wrap"><span class="stat-label">WAVE</span><span id="wave-num">1</span></div>
+      <div id="heat-wrap"><span class="stat-label">CROWD HEAT</span><div id="heat-bar"><div id="heat-fill"></div></div></div>
+      <div id="killfeed"></div>
+      <div id="banner"></div>
+      <div id="bossbar" class="hidden"><span id="boss-name"></span><div id="boss-hp"><div id="boss-hp-fill"></div></div></div>
+    </div>
+
+    <div id="screen-start" class="screen layer">
+      <h1 class="title">PIT<span>BOSS</span></h1>
+      <p class="tagline">The bots remember. Do you?</p>
+      <button id="btn-enter" class="btn-primary">ENTER THE PIT</button>
+      <button id="btn-roster" class="btn-ghost">RIVAL ROSTER</button>
+      <div class="controls-help">
+        <span><b>WASD</b> move</span><span><b>MOUSE</b> aim</span><span><b>LMB</b> fire</span>
+        <span><b>R</b> reload</span>        <span><b>SPACE</b> jump</span><span><b>SHIFT</b> sprint</span><span><b>ESC</b> pause</span>
+      </div>
+      <p class="pickup-hint">GRAB ♥ VIALS TO HEAL · GOLD &amp; CYAN DROPS ARE LIMITED-TIME WEAPONS</p>
+      <p id="best-line" class="best-line"></p>
+      <div id="hall" class="hall"></div>
+      <div class="share-row">
+        <input id="paste-code" placeholder="PASTE A FRIEND'S RUN CODE" maxlength="32" />
+        <button id="btn-decode" class="btn-ghost">DECODE</button>
+      </div>
+      <p id="decode-result" class="decode-result"></p>
+    </div>
+
+    <div id="screen-death" class="screen layer hidden">
+      <h2 class="death-title">YOU DIED</h2>
+      <p id="new-highscore" class="new-highscore hidden"></p>
+      <div id="killer-card">
+        <p class="kc-label">FINISHED BY</p>
+        <p id="killer-name" class="kc-name"></p>
+        <p id="killer-tier" class="kc-tier"></p>
+        <div id="killer-traits" class="trait-chips"></div>
+        <p id="killer-taunt" class="kc-taunt"></p>
+        <p id="killer-promo" class="kc-promo"></p>
+      </div>
+      <div id="run-stats"></div>
+      <div class="share-row">
+        <input id="share-code" readonly />
+        <button id="btn-copy" class="btn-ghost">COPY</button>
+      </div>
+      <button id="btn-reenter" class="btn-primary">RE-ENTER THE PIT</button>
+      <button id="btn-roster-death" class="btn-ghost">RIVAL ROSTER</button>
+    </div>
+
+    <div id="screen-roster" class="screen layer hidden">
+      <h2 class="roster-title">RIVAL ROSTER</h2>
+      <p class="roster-sub">They rank up when they kill you. Grudges persist between runs — and between visits.</p>
+      <div id="roster-list"></div>
+      <button id="btn-roster-back" class="btn-primary">BACK TO THE PIT</button>
+    </div>
+
+    <div id="pause-layer" class="layer hidden">
+      <div class="pause-card">
+        <h3>PAUSED</h3>
+        <p>The pit waits. The rivals sharpen.<br />If the mouse won't recapture, wait a second and click RESUME again.</p>
+        <button id="btn-resume" class="btn-primary">RESUME</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

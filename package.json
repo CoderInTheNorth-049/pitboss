@@ -1,0 +1,29 @@
+{
+  "name": "pitboss",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Browser arena roguelite FPS vs bots that remember you. Three.js MVP.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test:e2e": "node tests/e2e.mjs",
+    "test:features": "node tests/features.mjs",
+    "test:decode": "node tests/decode.mjs",
+    "test:regression": "node tests/regression.mjs",
+    "test:hall": "node tests/hall.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.4",
+    "puppeteer-core": "^25.8.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}
