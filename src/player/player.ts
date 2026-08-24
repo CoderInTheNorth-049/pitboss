@@ -17,14 +17,18 @@ export class Player {
   shieldFrac = 0;
   shieldT = 0;
   shieldBudget = 0;
+  moveMul = 1;
+  jumpMul = 1;
+  gravityMul = 1;
 
   private velX = 0;
   private velZ = 0;
   private bobPhase = 0;
+  private baseFov = 78;
   shakeT = 0;
 
   constructor(aspect: number) {
-    this.camera = new THREE.PerspectiveCamera(78, aspect, 0.05, 200);
+    this.camera = new THREE.PerspectiveCamera(this.baseFov, aspect, 0.05, 200);
     this.motor.pos.set(0, 0, 14);
     this.yaw = 0;
     this.updateCamera(0, true);
@@ -44,8 +48,7 @@ export class Player {
     this.yaw -= look.x * 0.0022;
     this.pitch = Math.max(-1.5, Math.min(1.5, this.pitch - look.y * 0.0022));
 
-    const fwd = input.axis('KeyW') - input.axis('KeyS');
-    const strafe = input.axis('KeyD') - input.axis('KeyA');
+    const { fwd, strafe } = input.moveInput();
     const sin = Math.sin(this.yaw);
     const cos = Math.cos(this.yaw);
 
@@ -54,7 +57,7 @@ export class Player {
     const len = Math.hypot(wx, wz);
     if (len > 1) { wx /= len; wz /= len; }
 
-    const speed = P.speed * (input.sprint && fwd > 0 ? P.sprintMul : 1);
+    const speed = P.speed * this.moveMul * (input.sprint && fwd > 0 ? P.sprintMul : 1);
     const targetX = wx * speed;
     const targetZ = wz * speed;
     const rate = len > 0.01 ? P.accel : P.friction;
@@ -62,7 +65,9 @@ export class Player {
     this.velX += (targetX - this.velX) * blend;
     this.velZ += (targetZ - this.velZ) * blend;
 
-    if (input.consumeJump()) this.motor.jump(P.jumpVel);
+    if (input.consumeJump()) this.motor.jump(P.jumpVel * this.jumpMul);
+
+    this.motor.gravity = P.gravity * this.gravityMul;
 
     const dx = this.velX * dt;
     const dz = this.velZ * dt;
@@ -92,9 +97,17 @@ export class Player {
     );
 
     const planar = Math.hypot(this.velX, this.velZ);
-    const targetFov = 78 + Math.min(6, Math.max(0, planar - P.speed) * 1.4);
+    const targetFov = this.baseFov + Math.min(6, Math.max(0, planar - P.speed) * 1.4);
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 8);
+      this.camera.updateProjectionMatrix();
+    }
+  }
+
+  setBaseFov(fov: number): void {
+    this.baseFov = fov;
+    if (!this.shakeT && Math.abs(this.velX) < 0.01 && Math.abs(this.velZ) < 0.01) {
+      this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
     }
   }

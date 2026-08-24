@@ -9,7 +9,7 @@ export class Motor {
   constructor(
     public radius: number,
     public height: number,
-    private gravity: number,
+    public gravity: number,
     private step: number
   ) {}
 

@@ -11,16 +11,21 @@ Every rival bot is persistent. Whoever lands the killing blow on you gets **prom
 ## Features
 
 - **Waves + AI director** — heat meter, stress-based pacing, surge events
+- **Wave mutators** — most waves (75% from wave 2) roll a rule-twist: LOW GRAVITY, GLASS CANNON (2× damage both ways), SWARM (2× quota, weaker rivals), BLINK, BOUNTY (loot every 4th kill), DARK ZONE (fog closes in), VAMPIRE (kills heal); announced with banner + HUD chip
+- **Boon drafts** — after every cleared wave the game freezes and offers 3 boons (pick 1 or skip for +25 vitals): move speed, mag size, headshot power, burn, sentry tuning, max vitals, drop rate, reload speed, kill-leech and more — stack a different build every run (all neutral-ish by design)
 - **Nemesis roster** — 5 tiers (GRUNT → TYRANT), 6 traits (SWIFT, BULWARK, DEADEYE, TWINCAST, PHANTOM, BRUISER), procedural names/taunts, persistent W/L records
 - **Special weapons** — PYROCLAST (flame cone: short range, hits whole crowds, ignites + spreads) and RAILHAND (piercing lance) drop every 3rd wave + surges; 12s each, then back to the PIT RIFLE
+- **WARDEN sentry** — violet turret drop deploys instantly where claimed; auto-targets nearest rival with LOS inside its visible 25m range ring, 3× rifle damage per shot; kills feed your streaks and drops
 - **First-person viewmodels** — every weapon has a hand-built model with sway, walk bob, recoil, reload dip and switch pop animations
+- **Headshot zones** — every rival has a head hitbox above the body sphere; headshots deal 1.75× damage with a distinct gold hitmarker and high-pitch audio cue (works on RAILHAND pierce too)
+- **Special-drop pity** — weapon drops never repeat back-to-back; PYROCLAST and RAILHAND strictly alternate, so the flame thrower always shows up within one drop
 - **Burn DoT** — flame-ignited rivals burn for 2s and can spread fire to nearby rivals
-- **Kill-streak drops** — every 8th kill spawns a drop where the enemy died: AEGIS shield (absorbs 65–80% of damage for 10s), OVERDRIVE core (2× damage + unlimited ammo, 6s) or an ammo cache
+- **Kill-streak drops** — every 8th kill spawns a drop where the enemy died: AEGIS shield (absorbs 65–80% of damage for 10s), OVERDRIVE core (2× damage + unlimited ammo, 6s), BULWARK core (full invulnerability, 5s), WARDEN turret (auto-firing sentry: 78 dmg/shot, 25m radius, 20s) or an ammo cache
 - **Kill-streak announcer** — DOUBLE KILL → TRIPLE KILL → RAMPAGE → UNSTOPPABLE banners with crowd roar; each tier stokes the director's heat
 - **Vitality vials** — heal pickup (+30 HP) every wave, 20s timer with shrinking ring + beacon
 - **Share codes** — death screen encodes your run (`PB1-…`); friends paste it on the start screen to compare against their best
 - **Hall of Scars** — local top-5 high-score board (wave, kills, accuracy, time) on the start screen; death screen announces `★ NEW HIGH SCORE ★` or your board rank
-- **Accessibility** — color-blind-safe telegraphs (shape + motion + audio, never color-only), fallback mouse-look when pointer lock is blocked, remappable-friendly input layer
+- **Accessibility** — fully remappable controls (ESDF, arrow keys, left-handed — anything) with conflict-safe swap, plus mouse sensitivity, invert-Y, FOV 70–110°, volume, reduced-flashing mode and crosshair size; color-blind-safe telegraphs (shape + motion + audio, never color-only), fallback mouse-look when pointer lock is blocked
 - **Procedural audio** — all SFX synthesized via WebAudio; zero asset downloads
 
 ## Quickstart
@@ -30,7 +35,7 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
-Controls: **WASD** move · **MOUSE** aim · **LMB** fire · **R** reload · **SPACE** jump · **SHIFT** sprint · **ESC** pause
+Controls: **WASD** move · **MOUSE** aim · **LMB** fire · **R** reload · **SPACE** jump · **SHIFT** sprint · **ESC** pause — all remappable in SETTINGS (start screen or pause menu); preferences persist in localStorage.
 
 ## Scripts
 
@@ -44,7 +49,8 @@ Controls: **WASD** move · **MOUSE** aim · **LMB** fire · **R** reload · **SP
 | `npm run test:decode` | Share-code decode + comparison messages |
 | `npm run test:regression` | Pointer-lock denial must never break the game |
 | `npm run test:hall` | High-score board: ranking, ties, persistence |
-
+| `npm run test:settings` | Rebind WASD→E, conflict swap, accessibility sliders, persistence, reset |
+| `npm run test:variety` | Mutator effects (glass cannon, low gravity, swarm, dark zone), boon stacking, draft pick/skip flow, seeded determinism |
 Tests use `puppeteer-core` driving your local Chrome (`CHROME_PATH` env to override) against a running dev server (`TEST_URL` env to override, default `http://localhost:5199`). Start one with `npx vite --port 5199` first. Debug hooks (`window.__PITBOSS`) are exposed in dev mode, or on any build via `?debug=1`.
 
 ## Architecture
@@ -57,7 +63,11 @@ src/
 │   ├── game.ts           orchestrator: state machine (menu/play/dead/pause),
 │   │                     frame loop w/ sub-stepping, spawn & death flows
 │   ├── highscores.ts     local top-5 board (localStorage, tie-break rules)
-│   ├── input.ts          keyboard/mouse, pointer lock + fallback look capture
+│   ├── input.ts          keyboard/mouse via remappable bindings, pointer lock + fallback look capture
+│   ├── settings.ts       bindings + accessibility prefs (localStorage), rebind conflict-swap
+│   ├── mods.ts           run-modifier aggregation: boon stacks + wave mutator multipliers
+│   ├── mutators.ts       wave mutator definitions (low gravity, glass cannon, swarm…)
+│   ├── boons.ts          boon draft definitions (perks picked after each wave)
 │   └── shareCode.ts      run ⇄ base36 string encode/decode/describe
 ├── player/player.ts      FPS controller: look, accel/friction, bob, FOV kick
 ├── weapons/
@@ -67,7 +77,8 @@ src/
 │                         (AoE + burn), bloom, reload, special-timer revert
 ├── enemies/
 │   ├── enemy.ts          FSM bot: rise → hunt/strafe → telegraph → burst fire,
-│                         LOS raycasts, unstuck steering, name sprites
+│   │                     LOS raycasts, unstuck steering, name sprites,
+│   │                     body + head hitboxes for locational damage
 │   ├── traits.ts         tiers, trait pool, stat composition
 │   ├── names.ts          procedural rival names
 │   └── taunts.ts         kill/spawn/feared/surge lines
@@ -116,7 +127,7 @@ vercel --prod   # production
 - **Touch/mobile unsupported** — pointer lock + WASD only; needs a mobile control scheme
 - **No unit tests** — e2e flows are covered headlessly, but pure logic (director math, trait stacking) isn't unit-tested
 - **Fire-and-forget persistence** — `store.put()` isn't awaited; a mid-write tab close can lose the latest promotion (acceptable stakes)
-- **Enemy stat rolls use `Math.random()`** instead of the injected RNG — blocks deterministic run replays
+- **~~Enemy stat rolls use `Math.random()`~~ FIXED** — `buildStats` now consumes the injected run RNG (prerequisite for future fully-seeded replays; mutator rolls are already seed-deterministic)
 - **Single arena** — layout is hand-authored in `arena.ts`; seeded procedural arenas are the obvious next step
 - **HUD is DOM-per-frame** — text updates every frame; fine now, move to canvas/sprites if profiling demands
 - **No WebGL context-loss recovery** — rare, but a lost context requires a manual refresh

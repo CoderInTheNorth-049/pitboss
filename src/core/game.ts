@@ -20,8 +20,12 @@ import { Hud } from '../ui/hud';
 import { Screens } from '../ui/screens';
 import type { DeathScreenData } from '../ui/screens';
 import { PickupManager, type PickupEvent, type PickupKind } from '../world/pickups';
+import { Sentry } from '../world/sentry';
 import { specById } from '../weapons/specs';
 import { HighScores } from './highscores';
+import { Settings } from './settings';
+import { RunMods } from './mods';
+import { BOONS, boonById, type BoonDef } from './boons';
 import { encodeRun, decodeRun, describeRun } from './shareCode';
 import { clamp } from '../utils/math';
 
@@ -33,9 +37,11 @@ function readBest(): number {
   }
 }
 
-type GameState = 'menu' | 'playing' | 'dead' | 'paused';
+type GameState = 'menu' | 'playing' | 'dead' | 'paused' | 'draft';
 
 export class Game {
+  readonly settings = new Settings();
+  readonly mods = new RunMods();
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private arena: Arena;
@@ -53,6 +59,7 @@ export class Game {
   private viewmodel: ViewModel;
 
   private enemies: Enemy[] = [];
+  private sentries: Sentry<Enemy>[] = [];
   private activeRivalIds = new Set<string>();
   private state: GameState = 'menu';
   private menuClock = 0;
@@ -78,7 +85,10 @@ export class Game {
   private lastPitch = 0;
   private prevShieldT = 0;
   private invuln = false;
+  private invulnT = 0;
+  private invulnAura: THREE.Mesh;
   private debugBypass = false;
+  private draftChoices: BoonDef[] = [];
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -99,11 +109,34 @@ export class Game {
     this.player.camera.add(this.viewmodel.rig);
     this.viewmodel.setWeapon(this.weapon.spec.id);
 
-    this.screens = new Screens();
+    this.screens = new Screens(this.settings, this.input);
+    this.input.applySettings(this.settings);
     this.input.attach(canvas);
     this.bindUi();
+    this.screens.onAccessChanged = () => this.applyAccess();
+    this.applyAccess();
+    this.screens.onBoonPicked = i => this.closeDraft(this.draftChoices[i] ?? null);
+    this.screens.onDraftSkip = () => this.closeDraft(null);
+
+    this.invulnAura = new THREE.Mesh(
+      new THREE.SphereGeometry(1.05, 20, 16),
+      new THREE.MeshBasicMaterial({
+        color: 0xffd23f, transparent: true, opacity: 0.14,
+        blending: THREE.AdditiveBlending, depthWrite: false
+      })
+    );
+    this.invulnAura.visible = false;
+    this.scene.add(this.invulnAura);
 
     window.addEventListener('resize', () => this.onResize());
+  }
+
+  private applyAccess(): void {
+    const a = this.settings.access;
+    this.player.setBaseFov(a.fov);
+    this.sfx.setVolume(a.volume);
+    this.hud.setCrosshairScale(a.crosshairScale);
+    this.hud.reducedFlash = a.reducedFlash;
   }
 
   private bindUi(): void {
@@ -191,8 +224,12 @@ export class Game {
           this.applyShield(ev.absorbFrac);
         } else if (ev.type === 'overdrive') {
           this.applyOverdrive();
+        } else if (ev.type === 'invuln') {
+          this.applyInvuln();
+        } else if (ev.type === 'sentry') {
+          this.deploySentry(ev.pos);
         } else if (ev.type === 'refill') {
-          this.weapon.ammo = this.weapon.spec.magSize;
+          this.weapon.ammo = this.weapon.magSize();
           this.weapon.reloading = false;
           this.sfx.refill();
           this.hud.feed('AMMO CELLS REFILLED', 'info');
@@ -217,7 +254,8 @@ export class Game {
         this.hud.banner(text);
         if (kind === 'wave') this.sfx.wave();
         if (kind === 'surge') this.sfx.surge();
-      }
+      },
+      () => this.mods.quotaMul
     );
     this.weapon.onSpecialEnd = () => {
       this.sfx.expire();
@@ -242,6 +280,12 @@ export class Game {
       shieldFrac: this.player.shieldFrac,
       shieldBudget: Math.round(this.player.shieldBudget),
       overdriveT: +this.overdriveT.toFixed(1),
+      invulnT: +this.invulnT.toFixed(1),
+      sentries: this.sentries.length,
+      mutator: this.mods.mutator?.id ?? null,
+      boons: this.mods.boonEntries(),
+      maxHp: this.player.maxHp,
+      lastSpecial: this.pickups?.lastSpecial ?? null,
       killsToDrop: CONFIG.drops.killsPerDrop - this.killsSinceDrop,
       pickups: this.pickups?.count ?? 0,
       best: this.bestWave,
@@ -270,6 +314,10 @@ export class Game {
     this.invuln = v;
   }
 
+  debugGiveInvuln(): void {
+    this.applyInvuln();
+  }
+
   debugGiveSpecial(id: string): void {
     const spec = specById(id);
     if (spec.specialDuration > 0) this.weapon.equipSpecial(spec);
@@ -284,18 +332,98 @@ export class Game {
   }
 
   debugPlayerHit(dmg: number): void {
-    this.debugBypass = true;
-    try {
-      this.onPlayerHit(dmg, this.enemies.find(e => e.state !== 'dead') ?? null);
-    } finally {
-      this.debugBypass = false;
-    }
+    this.onPlayerHit(dmg, this.enemies.find(e => e.state !== 'dead') ?? null);
   }
 
   debugSpawnHealHere(): void {
     const p = this.player.position.clone();
     p.x += 0.4;
     this.pickups.spawnAtPoint('heal', p);
+  }
+
+  debugSpawnWeaponRandomHere(): string {
+    const p = this.player.position.clone();
+    p.x += 0.4;
+    return this.pickups.spawnAtPoint('weapon', p)?.id ?? 'none';
+  }
+
+  debugTeleportEnemy(x: number, z: number): boolean {
+    const e = this.enemies.find(en => en.state !== 'dead');
+    if (!e) return false;
+    e.motor.pos.set(x, 0, z);
+    e.motor.velY = 0;
+    e.group.position.copy(e.motor.pos);
+    return true;
+  }
+
+  debugPlaceEnemyClear(): boolean {
+    const e = this.enemies.find(en => en.state !== 'dead');
+    if (!e) return false;
+    const eye = this.player.eyePosition(new THREE.Vector3());
+    const spots: Array<[number, number]> =
+      [[4, 12], [-4, 12], [3, 7], [-3, 7], [5, 9], [-5, 9], [2, 10], [-2, 10], [0, 9], [6, 12]];
+    for (const [x, z] of spots) {
+      if (!this.arena.isClear(x, z, 0.6)) continue;
+      const probe = new THREE.Vector3(x, 0.95 * e.stats.scale, z);
+      if (!this.arena.losBlocked(eye, probe)) {
+        e.motor.pos.set(x, 0, z);
+        e.motor.velY = 0;
+        e.group.position.copy(e.motor.pos);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  debugFireAt(zone: 'head' | 'body'): {
+    fired: boolean; killed: boolean; headshot: boolean; hpBefore: number; hpAfter: number;
+  } {
+    const e = this.enemies.find(en => en.state !== 'dead');
+    const fallback = { fired: false, killed: false, headshot: false, hpBefore: -1, hpAfter: -1 };
+    if (!e) return fallback;
+    e.group.position.copy(e.motor.pos);
+
+    const hpBefore = Math.round(e.hp);
+    const camera = this.player.camera;
+    const point = zone === 'head' ? e.headCenter : e.center.clone();
+    const aimFromCam = point.clone().sub(camera.position).normalize();
+    const right = new THREE.Vector3().crossVectors(aimFromCam, camera.up).normalize();
+    const origin = camera.position.clone().addScaledVector(aimFromCam, 0.35).addScaledVector(right, 0.14);
+    origin.y -= 0.12;
+    const dir = point.clone().sub(origin).normalize();
+
+    const targets: ShotTarget[] = [];
+    for (const en of this.enemies) {
+      if (en.state === 'dead') continue;
+      targets.push({
+        hitCenter: en.center,
+        hitRadius: en.hitRadius,
+        headCenter: en.headCenter,
+        headRadius: en.headRadius,
+        onHit: dmg => this.applyDamageToEnemy(en, dmg),
+        onBurn: (dps, dur) => en.ignite(dps, dur)
+      });
+    }
+
+    const w = this.weapon;
+    const prevFree = w.freeFire;
+    w.freeFire = true;
+    w.forceReady();
+    const result = w.fire(origin, dir, targets, {
+      arenaColliders: this.arena.colliders,
+      effects: this.effects,
+      sfx: this.sfx,
+      onHeadshot: () => {}
+    });
+    w.freeFire = prevFree;
+
+    return {
+      fired: result.fired,
+      killed: result.killed,
+      headshot: result.headshot,
+      hpBefore,
+      hpAfter: Math.round(e.hp)
+    };
   }
 
   debugSpawnWeaponHere(id: string): void {
@@ -309,6 +437,64 @@ export class Game {
     p.x -= Math.sin(this.player.yaw) * dist;
     p.z -= Math.cos(this.player.yaw) * dist;
     this.pickups.spawnAtPoint(kind, p, id ? specById(id) : null);
+  }
+
+  debugDeploySentryHere(): void {
+    const p = this.player.position.clone();
+    p.x -= Math.sin(this.player.yaw) * 2.5;
+    p.z -= Math.cos(this.player.yaw) * 2.5;
+    this.deploySentry(p);
+  }
+
+  debugForceMutator(id: string): boolean {
+    const mut = this.mods.forceMutator(id);
+    this.hud.setMutator(mut ? mut.name : null, mut?.color ?? null);
+    (this.scene.fog as THREE.FogExp2).density = this.mods.fogDensity;
+    return mut !== null;
+  }
+
+  debugClearMutator(): void {
+    this.mods.clearMutator();
+    this.hud.setMutator(null, null);
+    (this.scene.fog as THREE.FogExp2).density = CONFIG.variety.fogBase;
+  }
+
+  debugGiveBoon(id: string): boolean {
+    const boon = boonById(id);
+    if (!boon) return false;
+    this.mods.addBoon(id);
+    this.syncMods();
+    if (id === 'vitality') {
+      this.player.maxHp = CONFIG.player.maxHp + this.mods.maxHpAdd;
+      this.player.heal(20);
+    } else if (id === 'mag') {
+      this.weapon.ammo = this.weapon.magSize();
+    }
+    return true;
+  }
+
+  debugOpenDraft(): boolean {
+    this.openDraft();
+    return this.state === 'draft';
+  }
+
+  debugWeaponMag(): number {
+    return this.weapon.magSize();
+  }
+
+  debugQuotaPreview(): number {
+    return Math.round((CONFIG.director.quotaBase + (this.director.wave - 1) * CONFIG.director.quotaPerWave) * this.mods.quotaMul);
+  }
+
+  debugMutatorSequence(seed: number, waves: number): string[] {
+    const rng = RNG.fromSeed(seed);
+    const mods = new RunMods();
+    const out: string[] = [];
+    for (let w = 1; w <= waves; w++) {
+      const m = mods.rollMutator(w, rng);
+      out.push(m ? m.id : 'none');
+    }
+    return out;
   }
 
   private applyShield(frac: number): void {
@@ -341,14 +527,38 @@ export class Game {
     this.hud.feed(`OVERDRIVE — ${CONFIG.boost.damageMul}× DAMAGE, UNLIMITED AMMO FOR ${CONFIG.boost.overdriveDuration}s`, 'info');
   }
 
+  private applyInvuln(): void {
+    this.invulnT = CONFIG.boost.invulnDuration + this.mods.bulwarkDurAdd;
+    this.invuln = true;
+    this.effects.spawnRing(this.player.position.clone().setY(0.1), '#ffd23f');
+    this.sfx.invulnUp();
+    this.hud.banner('BULWARK CORE');
+    this.hud.feed(`BULWARK ONLINE — IMMORTAL FOR ${CONFIG.boost.invulnDuration}s`, 'info');
+  }
+
+  private deploySentry(pos: THREE.Vector3): void {
+    const sentry = new Sentry<Enemy>(pos.clone().setY(0), this.mods.sentryDurMul, this.mods.sentryDmgMul);
+    sentry.addTo(this.scene);
+    this.sentries.push(sentry);
+    this.effects.spawnRing(pos.clone().setY(0.1), '#c15cff');
+    this.sfx.sentryUp();
+    this.hud.banner('WARDEN');
+    this.hud.feed(
+      `WARDEN DEPLOYED — ${CONFIG.sentry.damage} DMG/SHOT · ${CONFIG.sentry.duration}s UPTIME`,
+      'info'
+    );
+  }
+
   private spawnKillDrop(enemy: Enemy): void {
     const D = CONFIG.drops;
-    const total = D.shieldWeight + D.overdriveWeight + D.refillWeight;
+    const total = D.shieldWeight + D.overdriveWeight + D.refillWeight + D.invulnWeight + D.sentryWeight;
     const roll = this.rng.next() * total;
     const kind: PickupKind =
       roll < D.shieldWeight ? 'shield'
         : roll < D.shieldWeight + D.overdriveWeight ? 'overdrive'
-          : 'refill';
+          : roll < D.shieldWeight + D.overdriveWeight + D.refillWeight ? 'refill'
+            : roll < D.shieldWeight + D.overdriveWeight + D.refillWeight + D.invulnWeight ? 'invuln'
+              : 'sentry';
 
     const base = enemy.group.position.clone();
     base.y = 0;
@@ -370,6 +580,8 @@ export class Game {
     this.pickups.spawnAtPoint(kind, pos);
     if (kind === 'shield') this.hud.feed('KILL-STREAK DROP — AEGIS CELL DEPLOYED', 'info');
     else if (kind === 'overdrive') this.hud.feed('KILL-STREAK DROP — OVERDRIVE CORE DEPLOYED', 'info');
+    else if (kind === 'invuln') this.hud.feed('KILL-STREAK DROP — BULWARK CORE DEPLOYED', 'info');
+    else if (kind === 'sentry') this.hud.feed('KILL-STREAK DROP — WARDEN TURRET DEPLOYED', 'info');
     else this.hud.feed('KILL-STREAK DROP — AMMO CACHE DEPLOYED', 'info');
   }
 
@@ -394,7 +606,15 @@ export class Game {
 
   private spawnEnemy(): void {
     const spec = this.director.requestSpawnSpec(this.activeRivalIds);
-    const stats = buildStats(spec.tier, spec.traitIds, this.director.wave, this.director.aggression());
+    const stats = buildStats(
+      spec.tier,
+      spec.traitIds,
+      this.director.wave,
+      this.director.aggression(),
+      this.rng,
+      this.mods.enemyHpMul,
+      this.mods.strafeMul
+    );
     const point = this.arena.randomSpawnPoint(this.rng, this.player.position);
     const enemy = new Enemy(spec, stats, point);
     enemy.addTo(this.scene);
@@ -420,6 +640,12 @@ export class Game {
       this.player.reset();
       this.weapon.reset();
       this.pickups.clear();
+      for (const s of this.sentries) s.dispose(this.scene);
+      this.sentries.length = 0;
+      this.mods.reset();
+      this.syncMods();
+      (this.scene.fog as THREE.FogExp2).density = CONFIG.variety.fogBase;
+      this.hud.setMutator(null, null);
       this.kills = 0;
       this.shotsFired = 0;
       this.shotsHit = 0;
@@ -431,6 +657,7 @@ export class Game {
       this.streakAnnounced = -1;
       this.spreadTimer = 0;
       this.prevShieldT = 0;
+      this.invulnT = 0;
       this.lastYaw = this.player.yaw;
       this.lastPitch = this.player.pitch;
       this.director.beginRun();
@@ -443,6 +670,7 @@ export class Game {
       this.hud.setBoss(null, 0);
       this.hud.setShield(0, 0);
       this.hud.setBoost(null, 0, 0);
+      this.hud.setInvuln(0);
 
       this.screens.hideAll();
       this.input.resetLockFail();
@@ -453,6 +681,51 @@ export class Game {
       this.screens.showStart();
       return;
     }
+    this.input.requestLock(this.canvas);
+  }
+
+  private openDraft(): void {
+    if (this.state !== 'playing') return;
+    const pool = BOONS.filter(b => this.mods.stackOf(b.id) < b.maxStacks);
+    const choices: BoonDef[] = [];
+    const bag = [...pool];
+    while (choices.length < Math.min(CONFIG.variety.draftChoices, bag.length)) {
+      const i = this.rng.int(0, bag.length);
+      choices.push(bag.splice(i, 1)[0]);
+    }
+    if (choices.length === 0) return;
+    this.draftChoices = choices;
+    this.state = 'draft';
+    this.input.fireHeld = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+    this.screens.showDraft(choices, id => this.mods.stackOf(id));
+    this.sfx.ui();
+  }
+
+  private closeDraft(picked: BoonDef | null): void {
+    if (this.state !== 'draft') return;
+    if (picked) {
+      this.mods.addBoon(picked.id);
+      this.syncMods();
+      if (picked.id === 'vitality') {
+        this.player.maxHp = CONFIG.player.maxHp + this.mods.maxHpAdd;
+        this.player.heal(20);
+        this.sfx.heal();
+      } else if (picked.id === 'mag') {
+        this.weapon.ammo = this.weapon.magSize();
+      } else {
+        this.sfx.powerup();
+      }
+      this.hud.feed(`BOON — ${picked.name}: ${picked.desc}`, 'info');
+    } else {
+      this.player.heal(CONFIG.variety.skipHeal);
+      this.sfx.heal();
+      this.hud.feed(`DRAFT SKIPPED — +${CONFIG.variety.skipHeal} VITALS`, 'info');
+    }
+    this.draftChoices = [];
+    this.screens.hideDraft();
+    this.player.maxHp = CONFIG.player.maxHp + this.mods.maxHpAdd;
+    this.state = 'playing';
     this.input.requestLock(this.canvas);
   }
 
@@ -537,6 +810,7 @@ export class Game {
       this.player.camera.lookAt(0, 1.4, 0);
     } else {
       this.effects.hideFlame();
+      this.invulnAura.visible = false;
     }
 
     this.effects.update(dt);
@@ -546,7 +820,17 @@ export class Game {
 
   private lastFrameT = performance.now();
 
+  private syncMods(): void {
+    this.player.moveMul = this.mods.moveSpeedMul;
+    this.player.jumpMul = this.mods.jumpMul;
+    this.player.gravityMul = this.mods.gravityMul;
+    this.weapon.magSizeMul = this.mods.magSizeMul;
+    this.weapon.reloadSpeedMul = this.mods.reloadSpeedMul;
+    this.weapon.specialDurAdd = this.mods.specialDurAdd;
+  }
+
   private simulate(dt: number): void {
+    this.syncMods();
     this.player.update(dt, this.input, this.arena);
 
     const yawDelta = this.player.yaw - this.lastYaw;
@@ -570,8 +854,10 @@ export class Game {
       targets.push({
         hitCenter: e.center,
         hitRadius: e.hitRadius,
+        headCenter: e.headCenter,
+        headRadius: e.headRadius,
         onHit: dmg => this.applyDamageToEnemy(e, dmg),
-        onBurn: (dps, dur) => e.ignite(dps, dur)
+        onBurn: (dps, dur) => e.ignite(dps * this.mods.burnMul, dur)
       });
     }
 
@@ -579,7 +865,11 @@ export class Game {
       const result = this.weapon.fire(origin, dir, targets, {
         arenaColliders: this.arena.colliders,
         effects: this.effects,
-        sfx: this.sfx
+        sfx: this.sfx,
+        onHeadshot: () => {
+          this.sfx.headshot();
+          this.hud.hitMarker(true);
+        }
       });
       if (result.fired) {
         this.shotsFired++;
@@ -638,6 +928,25 @@ export class Game {
       }
     }
 
+    if (this.sentries.length > 0) {
+      const sentryCtx = {
+        enemies: this.enemies,
+        arena: this.arena,
+        fx: this.effects,
+        sfx: this.sfx,
+        onDamage: (e: Enemy, dmg: number) => this.applyDamageToEnemy(e, dmg)
+      };
+      for (let i = this.sentries.length - 1; i >= 0; i--) {
+        const s = this.sentries[i];
+        s.update(dt, sentryCtx);
+        if (s.expired) {
+          s.dispose(this.scene);
+          this.sentries.splice(i, 1);
+          this.hud.feed('WARDEN OFFLINE', 'info');
+        }
+      }
+    }
+
     if (this.overdriveT > 0) {
       this.overdriveT = Math.max(0, this.overdriveT - dt);
       if (this.overdriveT === 0) {
@@ -646,6 +955,25 @@ export class Game {
         this.sfx.expire();
         this.hud.feed('OVERDRIVE SPENT', 'info');
       }
+    }
+
+    if (this.invulnT > 0) {
+      this.invulnT = Math.max(0, this.invulnT - dt);
+      if (this.invulnT === 0) {
+        this.sfx.expire();
+        this.hud.feed('BULWARK FADED', 'info');
+      }
+    }
+    this.invuln = this.invulnT > 0;
+    if (this.invulnT > 0) {
+      const p = this.player.position;
+      this.invulnAura.position.set(p.x, p.y + CONFIG.player.height * 0.5, p.z);
+      const frac = this.invulnT / CONFIG.boost.invulnDuration;
+      this.invulnAura.scale.setScalar(1 + Math.sin(performance.now() / 80) * 0.05 * frac);
+      (this.invulnAura.material as THREE.MeshBasicMaterial).opacity = 0.08 + 0.1 * frac;
+      this.invulnAura.visible = true;
+    } else {
+      this.invulnAura.visible = false;
     }
 
     if (this.prevShieldT > 0 && this.player.shieldT === 0 && this.player.shieldFrac > 0) {
@@ -698,6 +1026,12 @@ export class Game {
       this.hud.setBoost(null, 0, 0);
     }
 
+    if (this.invulnT > 0) {
+      this.hud.setInvuln(this.invulnT / CONFIG.boost.invulnDuration);
+    } else {
+      this.hud.setInvuln(0);
+    }
+
     let boss: Enemy | null = null;
     for (const e of this.enemies) {
       if (e.state === 'dead' || e.data.tier < 3) continue;
@@ -721,16 +1055,26 @@ export class Game {
       if (phase === 'active') {
         this.lastPhase = phase;
         this.pickups.spawnAtRandom('heal');
+        const mut = this.mods.rollMutator(this.director.wave, this.rng);
+        if (mut) {
+          this.hud.banner(`MUTATOR — ${mut.name}`);
+          this.hud.feed(`${mut.name} — ${mut.desc}`, 'info');
+          this.sfx.mutator();
+        }
+        this.hud.setMutator(mut ? mut.name : null, mut?.color ?? null);
+        (this.scene.fog as THREE.FogExp2).density = this.mods.fogDensity;
         if (this.director.wave % 3 === 0) {
           this.pickups.spawnAtRandom('weapon');
-          this.hud.feed('WEAPON DROP DEPLOYED — FIND THE LIGHT PILLAR', 'info');
+          this.pickups.spawnAtRandom('sentry');
+          this.hud.feed('WEAPON + WARDEN DROP DEPLOYED — FIND THE LIGHT PILLARS', 'info');
         }
       } else {
         this.lastPhase = phase;
         this.player.heal(CONFIG.director.healBetweenWaves);
-        this.weapon.ammo = this.weapon.spec.magSize;
+        this.weapon.ammo = this.weapon.magSize();
         this.weapon.reloading = false;
         this.hud.feed(`WAVE CLEARED — +${CONFIG.director.healBetweenWaves} VITALS, AMMO REFILLED`, 'info');
+        this.openDraft();
       }
     }
     const surging = this.director.surging;
@@ -742,7 +1086,7 @@ export class Game {
   }
 
   private applyDamageToEnemy(enemy: Enemy, dmg: number, silent = false): 'hit' | 'dead' {
-    const result = enemy.takeDamage(dmg);
+    const result = enemy.takeDamage(Math.round(dmg * this.mods.dmgOutMul));
     if (!silent) {
       this.sfx.hit();
       this.hud.hitMarker();
@@ -761,18 +1105,27 @@ export class Game {
     if (enemy.data.tier >= 2) {
       this.hud.feed(`${enemy.data.name} has fallen. The pit falls silent... briefly.`, 'rival');
     }
+    const heal = this.mods.killHealBoon + this.mods.killHealMut;
+    if (heal > 0 && this.player.hp > 0) this.player.heal(heal);
+    const bounty = this.mods.bountyEvery;
+    if (bounty !== null && this.kills % bounty === 0) this.spawnKillDrop(enemy);
     this.killsSinceDrop++;
-    if (this.killsSinceDrop >= CONFIG.drops.killsPerDrop) {
+    if (this.killsSinceDrop >= this.killsPerDropNow()) {
       this.killsSinceDrop = 0;
       this.spawnKillDrop(enemy);
     }
     this.registerStreakKill();
   }
 
+  private killsPerDropNow(): number {
+    const base = Math.max(3, Math.round((CONFIG.drops.killsPerDrop - this.mods.dropKillsReduce) / this.mods.dropRateMul));
+    return Math.min(CONFIG.drops.killsPerDrop, base);
+  }
+
   private onPlayerHit(dmg: number, killer: Enemy | null): void {
     if (this.state !== 'playing') return;
     if (this.invuln && !this.debugBypass) return;
-    let incoming = dmg;
+    let incoming = dmg * this.mods.dmgInMul;
     if (this.player.shieldT > 0 && this.player.shieldFrac > 0) {
       const absorbed = Math.min(this.player.shieldBudget, incoming * this.player.shieldFrac);
       this.player.shieldBudget -= absorbed;

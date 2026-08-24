@@ -9,6 +9,10 @@ export class RNG {
     return new RNG((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0);
   }
 
+  static fromSeed(seed: number): RNG {
+    return new RNG(seed);
+  }
+
   next(): number {
     this.s = (this.s + 0x6d2b79f5) | 0;
     let t = this.s;

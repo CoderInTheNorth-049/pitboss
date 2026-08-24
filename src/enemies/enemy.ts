@@ -136,6 +136,14 @@ export class Enemy {
     return 0.58 * this.stats.scale;
   }
 
+  get headCenter(): THREE.Vector3 {
+    return this.group.position.clone().add(new THREE.Vector3(0, 1.42 * this.stats.scale, 0));
+  }
+
+  get headRadius(): number {
+    return 0.26 * this.stats.scale;
+  }
+
   get isBurning(): boolean {
     return this.burnT > 0 && this.state === 'combat';
   }

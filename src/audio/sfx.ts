@@ -1,6 +1,7 @@
 export class Sfx {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  private volume = 1;
   enabled = true;
 
   unlock(): void {
@@ -11,11 +12,16 @@ export class Sfx {
     try {
       this.ctx = new AudioContext();
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.42;
+      this.master.gain.value = 0.42 * this.volume;
       this.master.connect(this.ctx.destination);
     } catch {
       this.ctx = null;
     }
+  }
+
+  setVolume(v: number): void {
+    this.volume = Math.max(0, Math.min(1, v));
+    if (this.master) this.master.gain.value = 0.42 * this.volume;
   }
 
   private env(dur: number, peak: number): GainNode | null {
@@ -70,6 +76,11 @@ export class Sfx {
 
   hit(): void {
     this.osc('triangle', 1350, 900, 0.05, 0.12);
+  }
+
+  headshot(): void {
+    this.osc('triangle', 2300, 1500, 0.07, 0.14);
+    setTimeout(() => this.osc('sine', 2900, 2900, 0.05, 0.08), 30);
   }
 
   hurt(): void {
@@ -147,6 +158,13 @@ export class Sfx {
     setTimeout(() => this.osc('triangle', 640, 960, 0.22, 0.12), 120);
   }
 
+  invulnUp(): void {
+    const notes = [440, 554, 659, 880];
+    notes.forEach((f, i) => setTimeout(() => this.osc('triangle', f, f * 1.01, 0.14, 0.14), i * 60));
+    this.noise(0.35, 0.06, 5200);
+    setTimeout(() => this.osc('sine', 1760, 2200, 0.3, 0.05), 240);
+  }
+
   shieldBreak(): void {
     this.osc('square', 880, 140, 0.3, 0.16);
     this.noise(0.26, 0.14, 1800);
@@ -169,5 +187,26 @@ export class Sfx {
     this.osc('square', 500, 500, 0.03, 0.08);
     setTimeout(() => this.osc('square', 380, 380, 0.03, 0.08), 80);
     setTimeout(() => this.osc('square', 620, 620, 0.05, 0.1), 160);
+  }
+
+  sentryShot(): void {
+    this.osc('square', 980, 210, 0.07, 0.1);
+    this.noise(0.05, 0.06, 4200);
+  }
+
+  sentryUp(): void {
+    this.osc('sawtooth', 140, 520, 0.3, 0.13);
+    setTimeout(() => this.osc('square', 660, 660, 0.05, 0.09), 260);
+    setTimeout(() => this.osc('sine', 1320, 1320, 0.08, 0.08), 340);
+  }
+
+  sentryDown(): void {
+    this.osc('sawtooth', 480, 90, 0.4, 0.12);
+  }
+
+  mutator(): void {
+    this.osc('square', 200, 400, 0.16, 0.12);
+    setTimeout(() => this.osc('square', 400, 200, 0.16, 0.12), 140);
+    this.noise(0.25, 0.07, 1000);
   }
 }

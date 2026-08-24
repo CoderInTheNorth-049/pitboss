@@ -22,7 +22,8 @@ export const CONFIG = {
     bloomMax: 0.05,
     bloomRecover: 0.11,
     range: 120,
-    recoilKick: 0.013
+    recoilKick: 0.013,
+    headshotMul: 1.75
   },
   enemy: {
     baseHp: 90,
@@ -65,9 +66,11 @@ export const CONFIG = {
   },
   drops: {
     killsPerDrop: 8,
-    shieldWeight: 50,
-    overdriveWeight: 30,
-    refillWeight: 20,
+    shieldWeight: 42,
+    overdriveWeight: 26,
+    refillWeight: 17,
+    invulnWeight: 10,
+    sentryWeight: 13,
     shieldAbsorbMin: 0.65,
     shieldAbsorbMax: 0.8,
     shieldDuration: 10,
@@ -75,7 +78,16 @@ export const CONFIG = {
   },
   boost: {
     overdriveDuration: 6,
-    damageMul: 2
+    damageMul: 2,
+    invulnDuration: 5
+  },
+  sentry: {
+    duration: 20,
+    range: 25,
+    damage: 78,
+    fireInterval: 0.5,
+    turnSpeed: 7,
+    aimTolerance: 0.14
   },
   streak: {
     windowSec: 3.5,
@@ -91,5 +103,14 @@ export const CONFIG = {
     radius: 3,
     chance: 0.5,
     checkInterval: 0.4
+  },
+  variety: {
+    mutatorChance: 0.75,
+    minWave: 2,
+    bountyEvery: 4,
+    fogBase: 0.016,
+    fogDark: 0.05,
+    draftChoices: 3,
+    skipHeal: 25
   }
 } as const;

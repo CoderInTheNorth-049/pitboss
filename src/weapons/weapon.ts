@@ -2,10 +2,13 @@ import * as THREE from 'three';
 import type { Effects } from '../vfx/effects';
 import type { Sfx } from '../audio/sfx';
 import { DEFAULT_SPEC, type WeaponSpec, type WeaponSoundId } from './specs';
+import { CONFIG } from '../config';
 
 export interface ShotTarget {
   hitCenter: THREE.Vector3;
   hitRadius: number;
+  headCenter?: THREE.Vector3;
+  headRadius?: number;
   onHit: (damage: number) => 'hit' | 'dead';
   onBurn?: (dps: number, duration: number) => void;
 }
@@ -14,16 +17,19 @@ export interface WeaponContext {
   arenaColliders: THREE.Box3[];
   effects: Effects;
   sfx: Sfx;
+  onHeadshot: () => void;
 }
 
 export interface FireResult {
   fired: boolean;
   killed: boolean;
   hitSomething: boolean;
+  headshot: boolean;
   recoil: number;
 }
 
 const MAX_RANGE = 120;
+const HEADSHOT_MUL = CONFIG.weapon.headshotMul;
 
 export class Weapon {
   spec: WeaponSpec = DEFAULT_SPEC;
@@ -33,10 +39,17 @@ export class Weapon {
   onSpecialEnd: () => void = () => {};
   damageMul = 1;
   freeFire = false;
+  magSizeMul = 1;
+  reloadSpeedMul = 1;
+  specialDurAdd = 0;
 
   private reloadT = 0;
   private cooldown = 0;
   bloom = 0;
+
+  magSize(): number {
+    return Math.max(1, Math.round(this.spec.magSize * this.magSizeMul));
+  }
 
   get isSpecial(): boolean {
     return this.spec.specialDuration > 0;
@@ -48,7 +61,7 @@ export class Weapon {
       this.reloadT -= dt;
       if (this.reloadT <= 0) {
         this.reloading = false;
-        this.ammo = this.spec.magSize;
+        this.ammo = this.magSize();
       }
     }
     this.bloom = Math.max(0, this.bloom - 0.11 * dt);
@@ -60,15 +73,15 @@ export class Weapon {
 
   equipSpecial(spec: WeaponSpec): void {
     this.spec = spec;
-    this.ammo = spec.magSize;
-    this.specialT = spec.specialDuration;
+    this.ammo = this.magSize();
+    this.specialT = spec.specialDuration + this.specialDurAdd;
     this.reloading = false;
     this.bloom = 0;
   }
 
   private revertToDefault(): void {
     this.spec = DEFAULT_SPEC;
-    this.ammo = DEFAULT_SPEC.magSize;
+    this.ammo = this.magSize();
     this.specialT = 0;
     this.reloading = false;
     this.onSpecialEnd();
@@ -76,7 +89,7 @@ export class Weapon {
 
   reset(): void {
     this.spec = DEFAULT_SPEC;
-    this.ammo = DEFAULT_SPEC.magSize;
+    this.ammo = this.magSize();
     this.specialT = 0;
     this.reloading = false;
     this.bloom = 0;
@@ -89,11 +102,16 @@ export class Weapon {
     return !this.reloading && this.cooldown <= 0 && (this.freeFire || this.ammo > 0);
   }
 
+  forceReady(): void {
+    this.cooldown = 0;
+    this.reloading = false;
+  }
+
   startReload(): boolean {
     if (this.freeFire) return false;
-    if (this.reloading || this.ammo === this.spec.magSize) return false;
+    if (this.reloading || this.ammo >= this.magSize()) return false;
     this.reloading = true;
-    this.reloadT = this.spec.reloadTime;
+    this.reloadT = this.spec.reloadTime * this.reloadSpeedMul;
     return true;
   }
 
@@ -112,7 +130,7 @@ export class Weapon {
         this.startReload();
         ctx.sfx.reload();
       }
-      return { fired: false, killed: false, hitSomething: false, recoil: 0 };
+      return { fired: false, killed: false, hitSomething: false, headshot: false, recoil: 0 };
     }
 
     const spec = this.spec;
@@ -131,6 +149,7 @@ export class Weapon {
 
     let killed = false;
     let hitSomething = false;
+    let headshot = false;
 
     for (let p = 0; p < spec.pellets; p++) {
       const dir = this.applySpread(baseDir, spec);
@@ -139,6 +158,7 @@ export class Weapon {
         const hits = this.collectHits(origin, dir, targets, wallT);
         if (hits.length > 0) {
           hitSomething = true;
+          if (hits.some(h => h.headshot)) headshot = true;
           const pierceEnd = hits[hits.length - 1].t + 1.2;
           ctx.effects.tracer(
             origin.clone().addScaledVector(dir, 0.6),
@@ -146,7 +166,8 @@ export class Weapon {
             spec.tracerColor, spec.tracerLife, spec.tracerWidth
           );
           for (const h of hits) {
-            if (h.onHit(damage) === 'dead') killed = true;
+            const dmg = h.headshot ? Math.round(damage * HEADSHOT_MUL) : damage;
+            if (h.onHit(dmg) === 'dead') killed = true;
           }
         } else {
           ctx.effects.tracer(
@@ -167,14 +188,17 @@ export class Weapon {
         );
         if (best) {
           hitSomething = true;
-          if (best.target.onHit(damage) === 'dead') killed = true;
+          if (best.headshot) headshot = true;
+          const dmg = best.headshot ? Math.round(damage * HEADSHOT_MUL) : damage;
+          if (best.target.onHit(dmg) === 'dead') killed = true;
         } else if (wallT < MAX_RANGE) {
           ctx.effects.impact(end, 0x8a8a94);
         }
       }
     }
 
-    return { fired: true, killed, hitSomething, recoil: spec.recoilKick };
+    if (headshot) ctx.onHeadshot();
+    return { fired: true, killed, hitSomething, headshot, recoil: spec.recoilKick };
   }
 
   private fireCone(
@@ -235,7 +259,7 @@ export class Weapon {
       ctx.effects.impact(origin.clone().addScaledVector(baseDir, wallT), 0x5c4a38);
     }
 
-    return { fired: true, killed, hitSomething: hitAny, recoil: spec.recoilKick };
+    return { fired: true, killed, hitSomething: hitAny, headshot: false, recoil: spec.recoilKick };
   }
 
   private castWall(origin: THREE.Vector3, dir: THREE.Vector3, colliders: THREE.Box3[]): number {
@@ -257,13 +281,20 @@ export class Weapon {
     dir: THREE.Vector3,
     targets: readonly ShotTarget[],
     maxT: number
-  ): Array<{ t: number; onHit: (d: number) => 'hit' | 'dead' }> {
+  ): Array<{ t: number; headshot: boolean; onHit: (d: number) => 'hit' | 'dead' }> {
     const ray = new THREE.Ray(origin, dir);
-    const hits: Array<{ t: number; onHit: (d: number) => 'hit' | 'dead' }> = [];
+    const hits: Array<{ t: number; headshot: boolean; onHit: (d: number) => 'hit' | 'dead' }> = [];
     for (const t of targets) {
+      if (t.headCenter && t.headRadius) {
+        const head = raySphere(ray, t.headCenter, t.headRadius);
+        if (head !== null && head <= maxT) {
+          hits.push({ t: head, headshot: true, onHit: t.onHit });
+          continue;
+        }
+      }
       const hit = raySphere(ray, t.hitCenter, t.hitRadius);
       if (hit !== null && hit <= maxT) {
-        hits.push({ t: hit, onHit: t.onHit });
+        hits.push({ t: hit, headshot: false, onHit: t.onHit });
       }
     }
     hits.sort((a, b) => a.t - b.t);
@@ -275,18 +306,29 @@ export class Weapon {
     dir: THREE.Vector3,
     targets: readonly ShotTarget[],
     maxT: number
-  ): { t: number; target: ShotTarget } | null {
+  ): { t: number; target: ShotTarget; headshot: boolean } | null {
     const ray = new THREE.Ray(origin, dir);
     let bestT = maxT;
+    let bestHead = false;
     let best: ShotTarget | null = null;
     for (const t of targets) {
+      if (t.headCenter && t.headRadius) {
+        const head = raySphere(ray, t.headCenter, t.headRadius);
+        if (head !== null && head < bestT) {
+          bestT = head;
+          best = t;
+          bestHead = true;
+          continue;
+        }
+      }
       const hit = raySphere(ray, t.hitCenter, t.hitRadius);
       if (hit !== null && hit < bestT) {
         bestT = hit;
         best = t;
+        bestHead = false;
       }
     }
-    return best ? { t: bestT, target: best } : null;
+    return best ? { t: bestT, target: best, headshot: bestHead } : null;
   }
 
   private applySpread(base: THREE.Vector3, spec: WeaponSpec): THREE.Vector3 {
