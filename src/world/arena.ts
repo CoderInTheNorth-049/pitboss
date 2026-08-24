@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { CONFIG } from '../config';
 
 export interface SpawnPad {
   point: THREE.Vector3;
@@ -20,7 +21,7 @@ export class Arena {
     this.buildCover();
     this.buildSpawnPads();
     scene.add(this.group);
-    scene.fog = new THREE.FogExp2(0x0b0b0e, 0.016);
+    scene.fog = new THREE.FogExp2(0x0b0b0e, CONFIG.variety.fogBase);
   }
 
   private buildFloor(scene: THREE.Scene) {

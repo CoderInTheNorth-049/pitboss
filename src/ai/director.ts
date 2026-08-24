@@ -31,7 +31,8 @@ export class Director {
     private memory: RivalMemory,
     private rng: RNG,
     private spawnFn: Spawner,
-    private announce: Announcer
+    private announce: Announcer,
+    private quotaMulFn: () => number = () => 1
   ) {}
 
   beginRun(): void {
@@ -110,7 +111,7 @@ export class Director {
 
   private startWave(): void {
     this.phase = 'active';
-    this.quotaLeft = D.quotaBase + (this.wave - 1) * D.quotaPerWave;
+    this.quotaLeft = Math.round((D.quotaBase + (this.wave - 1) * D.quotaPerWave) * this.quotaMulFn());
     this.spawnCd = 0.4;
     this.announce(`WAVE ${this.wave}`, 'wave');
   }

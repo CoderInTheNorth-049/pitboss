@@ -24,6 +24,7 @@ export interface EnemyContext {
   sfx: Sfx;
   rng: RNG;
   onPlayerHit: (damage: number, killer: Enemy) => void;
+  onBurnTick: (enemy: Enemy, dmg: number) => void;
 }
 
 type State = 'rising' | 'combat' | 'dead';
@@ -60,10 +61,15 @@ export class Enemy {
   state: State = 'rising';
   deathT = 0;
   removeMe = false;
+  burnDps = 0;
+  burnT = 0;
+
+  private burnAcc = 0;
 
   private bodyMat: THREE.MeshStandardMaterial;
   private eyeMat: THREE.MeshStandardMaterial;
   private eye: THREE.Mesh;
+  private baseEmissive = new THREE.Color();
   private nameSprite: THREE.Sprite | null = null;
   private flashT = 0;
   private riseT = 0.7;
@@ -104,6 +110,7 @@ export class Enemy {
     body.position.y = 0.42 * stats.scale + (0.85 * stats.scale) / 2;
     body.castShadow = true;
     this.group.add(body);
+    this.baseEmissive.copy(this.bodyMat.emissive);
 
     this.eyeMat = new THREE.MeshStandardMaterial({
       color: 0x0a0a0c,
@@ -127,6 +134,24 @@ export class Enemy {
 
   get hitRadius(): number {
     return 0.58 * this.stats.scale;
+  }
+
+  get headCenter(): THREE.Vector3 {
+    return this.group.position.clone().add(new THREE.Vector3(0, 1.42 * this.stats.scale, 0));
+  }
+
+  get headRadius(): number {
+    return 0.26 * this.stats.scale;
+  }
+
+  get isBurning(): boolean {
+    return this.burnT > 0 && this.state === 'combat';
+  }
+
+  ignite(dps: number, duration: number): void {
+    if (this.state !== 'combat') return;
+    this.burnDps = Math.max(this.burnDps, dps);
+    this.burnT = Math.max(this.burnT, duration);
   }
 
   addTo(scene: THREE.Scene): void {
@@ -159,9 +184,30 @@ export class Enemy {
     if (this.hp <= 0) {
       this.state = 'dead';
       this.deathT = 0.55;
+      this.burnT = 0;
       return 'dead';
     }
     return 'hit';
+  }
+
+  private updateBurn(dt: number, ctx: EnemyContext): void {
+    if (this.burnT <= 0) {
+      this.burnDps = 0;
+      return;
+    }
+    this.burnT -= dt;
+    this.burnAcc += dt;
+    const tick = 0.25;
+    while (this.burnAcc >= tick) {
+      this.burnAcc -= tick;
+      ctx.onBurnTick(this, Math.max(1, Math.round(this.burnDps * tick)));
+    }
+    if (Math.random() < dt * 22) {
+      const p = this.center.clone();
+      p.x += (Math.random() - 0.5) * 0.5;
+      p.z += (Math.random() - 0.5) * 0.5;
+      ctx.fx.ember(p, new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.9, (Math.random() - 0.5) * 0.4));
+    }
   }
 
   update(dt: number, ctx: EnemyContext): void {
@@ -191,7 +237,15 @@ export class Enemy {
     }
 
     this.flashT = Math.max(0, this.flashT - dt);
-    this.bodyMat.emissiveIntensity = 0.35 + (this.flashT > 0 ? 2.2 : 0);
+    this.updateBurn(dt, ctx);
+    if (this.burnT > 0) {
+      const flicker = 1.1 + Math.sin(performance.now() * 0.021) * 0.45;
+      this.bodyMat.emissive.setHex(0xff6a1a);
+      this.bodyMat.emissiveIntensity = flicker + (this.flashT > 0 ? 2.2 : 0);
+    } else {
+      this.bodyMat.emissive.copy(this.baseEmissive);
+      this.bodyMat.emissiveIntensity = 0.35 + (this.flashT > 0 ? 2.2 : 0);
+    }
 
     const toPlayer = ctx.playerFeet.clone().sub(this.motor.pos);
     const dist = Math.hypot(toPlayer.x, toPlayer.z);

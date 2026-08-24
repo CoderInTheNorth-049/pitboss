@@ -16,7 +16,11 @@
       <div id="hp-wrap"><span class="stat-label">VITALS</span><div id="hp-bar"><div id="hp-fill"></div></div></div>
       <div id="ammo-wrap"><span id="ammo-count">30</span><span class="stat-label">/ ∞</span><div id="reload-hint" class="hidden">RELOADING</div></div>
       <div id="special-wrap" class="hidden"><span id="special-name"></span><div id="special-bar"><div id="special-fill"></div></div></div>
+      <div id="shield-wrap" class="hidden"><span id="shield-name"></span><div id="shield-bar"><div id="shield-fill"></div></div></div>
+      <div id="boost-wrap" class="hidden"><span id="boost-name"></span><div id="boost-bar"><div id="boost-fill"></div></div></div>
+      <div id="invuln-wrap" class="hidden"><span id="invuln-name"></span><div id="invuln-bar"><div id="invuln-fill"></div></div></div>
       <div id="wave-wrap"><span class="stat-label">WAVE</span><span id="wave-num">1</span></div>
+      <div id="mutator-chip" class="hidden"></div>
       <div id="heat-wrap"><span class="stat-label">CROWD HEAT</span><div id="heat-bar"><div id="heat-fill"></div></div></div>
       <div id="killfeed"></div>
       <div id="banner"></div>
@@ -27,12 +31,21 @@
       <h1 class="title">PIT<span>BOSS</span></h1>
       <p class="tagline">The bots remember. Do you?</p>
       <button id="btn-enter" class="btn-primary">ENTER THE PIT</button>
-      <button id="btn-roster" class="btn-ghost">RIVAL ROSTER</button>
-      <div class="controls-help">
+      <div class="btn-row">
+        <button id="btn-roster" class="btn-ghost">RIVAL ROSTER</button>
+        <button id="btn-settings" class="btn-ghost">SETTINGS</button>
+      </div>
+      <div id="controls-help" class="controls-help">
         <span><b>WASD</b> move</span><span><b>MOUSE</b> aim</span><span><b>LMB</b> fire</span>
         <span><b>R</b> reload</span>        <span><b>SPACE</b> jump</span><span><b>SHIFT</b> sprint</span><span><b>ESC</b> pause</span>
       </div>
-      <p class="pickup-hint">GRAB ♥ VIALS TO HEAL · GOLD &amp; CYAN DROPS ARE LIMITED-TIME WEAPONS</p>
+      <div id="drop-guide" class="drop-guide"></div>
+      <div class="run-variety">
+        <p class="rv-title">EVERY RUN FIGHTS DIFFERENT</p>
+        <p class="rv-line"><b>WAVE MUTATORS</b> — most waves twist the rules: low gravity, glass cannon, swarm, bounty, dark zone, vampire…</p>
+        <div id="mutator-chips" class="mutator-chips"></div>
+        <p class="rv-line"><b>BOON DRAFTS</b> — after every cleared wave, pick 1 of 3 upgrades. Stack a different build each run.</p>
+      </div>
       <p id="best-line" class="best-line"></p>
       <div id="hall" class="hall"></div>
       <div class="share-row">
@@ -74,7 +87,37 @@
         <h3>PAUSED</h3>
         <p>The pit waits. The rivals sharpen.<br />If the mouse won't recapture, wait a second and click RESUME again.</p>
         <button id="btn-resume" class="btn-primary">RESUME</button>
+        <button id="btn-pause-settings" class="btn-ghost">SETTINGS</button>
       </div>
+    </div>
+
+    <div id="screen-settings" class="screen layer hidden">
+      <h2 class="settings-title">SETTINGS</h2>
+      <div class="settings-tabs">
+        <button id="tab-controls" class="settings-tab active">CONTROLS</button>
+        <button id="tab-access" class="settings-tab">ACCESSIBILITY</button>
+      </div>
+      <div id="panel-controls" class="settings-panel">
+        <div id="bind-list"></div>
+        <p class="settings-hint">CLICK A ROW, THEN PRESS ANY KEY OR MOUSE BUTTON · ESC CANCELS · CONFLICTS SWAP</p>
+        <button id="btn-binds-reset" class="btn-ghost btn-small">RESET TO DEFAULTS</button>
+      </div>
+      <div id="panel-access" class="settings-panel hidden">
+        <label class="acc-row"><span>MOUSE SENSITIVITY</span><input id="set-sens" type="range" min="0.3" max="3" step="0.05" /><output id="sens-val"></output></label>
+        <label class="acc-row"><span>FIELD OF VIEW</span><input id="set-fov" type="range" min="70" max="110" step="1" /><output id="fov-val"></output></label>
+        <label class="acc-row"><span>MASTER VOLUME</span><input id="set-vol" type="range" min="0" max="1" step="0.05" /><output id="vol-val"></output></label>
+        <label class="acc-row"><span>CROSSHAIR SIZE</span><input id="set-cross" type="range" min="0.6" max="1.8" step="0.05" /><output id="cross-val"></output></label>
+        <label class="acc-row toggle"><span>INVERT Y AXIS</span><input id="set-invert" type="checkbox" /></label>
+        <label class="acc-row toggle"><span>REDUCED FLASHING</span><input id="set-flash" type="checkbox" /></label>
+        <p class="settings-hint">TELEGRAPHS NEVER RELY ON COLOR ALONE — SHAPE, MOTION AND AUDIO ALWAYS CARRY THE WARNING.</p>
+      </div>
+      <button id="btn-settings-back" class="btn-primary">BACK</button>
+    </div>
+
+    <div id="screen-draft" class="screen layer hidden">
+      <h2 class="draft-title">WAVE CLEARED — CHOOSE A BOON</h2>
+      <div id="boon-cards" class="boon-cards"></div>
+      <button id="btn-draft-skip" class="btn-ghost">SKIP — TAKE +25 VITALS</button>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

@@ -49,12 +49,15 @@ export function buildStats(
   tier: number,
   traitIds: readonly TraitId[],
   wave: number,
-  aggression: number
+  aggression: number,
+  rng: { range(min: number, max: number): number },
+  enemyHpMul = 1,
+  strafeMul = 1
 ): EnemyStats {
   const e = {
-    hp: 90 * (1 + tier * 0.35),
-    speed: 3.3 + Math.random() * 1.2,
-    strafeSpeed: 2.6,
+    hp: 90 * (1 + tier * 0.35) * enemyHpMul,
+    speed: rng.range(3.3, 4.5),
+    strafeSpeed: 2.6 * strafeMul,
     accuracy: Math.min(0.72, 0.26 + (wave - 1) * 0.02),
     damage: Math.min(18, 9 + (wave - 1) * 0.45),
     burst: 1,
