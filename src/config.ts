@@ -62,5 +62,34 @@ export const CONFIG = {
     healBetweenWaves: 25,
     quotaBase: 5,
     quotaPerWave: 2
+  },
+  drops: {
+    killsPerDrop: 8,
+    shieldWeight: 50,
+    overdriveWeight: 30,
+    refillWeight: 20,
+    shieldAbsorbMin: 0.65,
+    shieldAbsorbMax: 0.8,
+    shieldDuration: 10,
+    shieldBudget: 120
+  },
+  boost: {
+    overdriveDuration: 6,
+    damageMul: 2
+  },
+  streak: {
+    windowSec: 3.5,
+    heatBonus: 0.02,
+    tiers: [
+      { count: 2, name: 'DOUBLE KILL' },
+      { count: 3, name: 'TRIPLE KILL' },
+      { count: 4, name: 'RAMPAGE' },
+      { count: 6, name: 'UNSTOPPABLE' }
+    ]
+  },
+  burnSpread: {
+    radius: 3,
+    chance: 0.5,
+    checkInterval: 0.4
   }
 } as const;

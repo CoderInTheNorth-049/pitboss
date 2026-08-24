@@ -14,6 +14,9 @@ export class Player {
   maxHp: number = P.maxHp;
   yaw = 0;
   pitch = 0;
+  shieldFrac = 0;
+  shieldT = 0;
+  shieldBudget = 0;
 
   private velX = 0;
   private velZ = 0;
@@ -36,6 +39,7 @@ export class Player {
   }
 
   update(dt: number, input: Input, arena: Arena): void {
+    if (this.shieldT > 0) this.shieldT = Math.max(0, this.shieldT - dt);
     const look = input.consumeLook();
     this.yaw -= look.x * 0.0022;
     this.pitch = Math.max(-1.5, Math.min(1.5, this.pitch - look.y * 0.0022));
@@ -119,5 +123,8 @@ export class Player {
     this.pitch = 0;
     this.shakeT = 0;
     this.bobPhase = 0;
+    this.shieldFrac = 0;
+    this.shieldT = 0;
+    this.shieldBudget = 0;
   }
 }

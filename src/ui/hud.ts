@@ -18,6 +18,12 @@ export class Hud {
   private specialWrap = document.getElementById('special-wrap')!;
   private specialName = document.getElementById('special-name')!;
   private specialFill = document.getElementById('special-fill')!;
+  private shieldWrap = document.getElementById('shield-wrap')!;
+  private shieldName = document.getElementById('shield-name')!;
+  private shieldFill = document.getElementById('shield-fill')!;
+  private boostWrap = document.getElementById('boost-wrap')!;
+  private boostName = document.getElementById('boost-name')!;
+  private boostFill = document.getElementById('boost-fill')!;
   private vignetteTimer: number | undefined;
 
   private bannerTimer = 0;
@@ -34,6 +40,27 @@ export class Hud {
     this.specialWrap.classList.remove('hidden');
     this.specialName.textContent = `${name} · ${Math.max(0, seconds).toFixed(1)}s`;
     this.specialFill.style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+  }
+
+  setShield(frac: number, seconds: number): void {
+    if (frac <= 0) {
+      this.shieldWrap.classList.add('hidden');
+      return;
+    }
+    this.shieldWrap.classList.remove('hidden');
+    this.shieldName.textContent = `AEGIS · ${Math.max(0, seconds).toFixed(1)}s`;
+    this.shieldFill.style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+    this.shieldWrap.classList.toggle('low', seconds < 3);
+  }
+
+  setBoost(name: string | null, frac: number, seconds: number): void {
+    if (name === null) {
+      this.boostWrap.classList.add('hidden');
+      return;
+    }
+    this.boostWrap.classList.remove('hidden');
+    this.boostName.textContent = `${name} · ${Math.max(0, seconds).toFixed(1)}s`;
+    this.boostFill.style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
   }
 
   setHp(cur: number, max: number): void {

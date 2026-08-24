@@ -134,4 +134,40 @@ export class Sfx {
     this.noise(0.24, 0.26, 600);
     this.osc('sine', 110, 45, 0.22, 0.3);
   }
+
+  flame(): void {
+    this.noise(0.09, 0.075, 900);
+    if (Math.random() < 0.3) {
+      setTimeout(() => this.noise(0.05, 0.04, 2400), Math.random() * 40);
+    }
+  }
+
+  shieldUp(): void {
+    this.osc('sine', 320, 640, 0.18, 0.16);
+    setTimeout(() => this.osc('triangle', 640, 960, 0.22, 0.12), 120);
+  }
+
+  shieldBreak(): void {
+    this.osc('square', 880, 140, 0.3, 0.16);
+    this.noise(0.26, 0.14, 1800);
+  }
+
+  overdrive(): void {
+    const notes = [220, 330, 440, 660];
+    notes.forEach((f, i) => setTimeout(() => this.osc('sawtooth', f, f * 1.02, 0.1, 0.13), i * 70));
+    this.noise(0.4, 0.08, 1200);
+  }
+
+  streak(tier: number): void {
+    const base = 300 + tier * 90;
+    this.noise(0.45, 0.2, 700 + tier * 150);
+    this.osc('sawtooth', base, base * 1.5, 0.3, 0.12);
+    setTimeout(() => this.osc('sawtooth', base * 1.25, base * 1.9, 0.28, 0.11), 110);
+  }
+
+  refill(): void {
+    this.osc('square', 500, 500, 0.03, 0.08);
+    setTimeout(() => this.osc('square', 380, 380, 0.03, 0.08), 80);
+    setTimeout(() => this.osc('square', 620, 620, 0.05, 0.1), 160);
+  }
 }

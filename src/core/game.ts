@@ -6,20 +6,24 @@ import { Player } from '../player/player';
 import { Input } from './input';
 import { Weapon } from '../weapons/weapon';
 import type { ShotTarget } from '../weapons/weapon';
+import { ViewModel } from '../weapons/viewmodel';
 import { Enemy } from '../enemies/enemy';
 import { TIERS, buildStats } from '../enemies/traits';
+import type { TraitDef } from '../enemies/traits';
 import { spawnLine } from '../enemies/taunts';
 import { Director } from '../ai/director';
 import { RivalMemory } from '../memory/rivals';
+import type { RivalRecord } from '../memory/rivals';
 import { Effects } from '../vfx/effects';
 import { Sfx } from '../audio/sfx';
 import { Hud } from '../ui/hud';
 import { Screens } from '../ui/screens';
 import type { DeathScreenData } from '../ui/screens';
-import { PickupManager, type PickupEvent } from '../world/pickups';
+import { PickupManager, type PickupEvent, type PickupKind } from '../world/pickups';
 import { specById } from '../weapons/specs';
 import { HighScores } from './highscores';
 import { encodeRun, decodeRun, describeRun } from './shareCode';
+import { clamp } from '../utils/math';
 
 function readBest(): number {
   try {
@@ -46,6 +50,7 @@ export class Game {
   private pickups!: PickupManager;
   private rng = RNG.fromTime();
   private director!: Director;
+  private viewmodel: ViewModel;
 
   private enemies: Enemy[] = [];
   private activeRivalIds = new Set<string>();
@@ -64,6 +69,17 @@ export class Game {
   private highscores = new HighScores();
   private bestWave = Math.max(readBest(), 0);
 
+  private overdriveT = 0;
+  private killsSinceDrop = 0;
+  private killTimes: number[] = [];
+  private streakAnnounced = -1;
+  private spreadTimer = 0;
+  private lastYaw = 0;
+  private lastPitch = 0;
+  private prevShieldT = 0;
+  private invuln = false;
+  private debugBypass = false;
+
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -78,6 +94,10 @@ export class Game {
     this.arena = new Arena(this.scene);
     this.effects = new Effects(this.scene);
     this.player = new Player(window.innerWidth / window.innerHeight);
+    this.scene.add(this.player.camera);
+    this.viewmodel = new ViewModel();
+    this.player.camera.add(this.viewmodel.rig);
+    this.viewmodel.setWeapon(this.weapon.spec.id);
 
     this.screens = new Screens();
     this.input.attach(canvas);
@@ -167,6 +187,15 @@ export class Game {
           this.sfx.powerup();
           this.hud.banner(ev.spec.name);
           this.hud.feed(`${ev.spec.name} — ${ev.spec.specialDuration}s OF OVERWHELMING FORCE`, 'info');
+        } else if (ev.type === 'shield') {
+          this.applyShield(ev.absorbFrac);
+        } else if (ev.type === 'overdrive') {
+          this.applyOverdrive();
+        } else if (ev.type === 'refill') {
+          this.weapon.ammo = this.weapon.spec.magSize;
+          this.weapon.reloading = false;
+          this.sfx.refill();
+          this.hud.feed('AMMO CELLS REFILLED', 'info');
         }
       }
     });
@@ -209,6 +238,11 @@ export class Game {
       phase: this.director?.phase ?? null,
       weapon: this.weapon.spec.id,
       specialT: +this.weapon.specialT.toFixed(1),
+      shieldT: +this.player.shieldT.toFixed(1),
+      shieldFrac: this.player.shieldFrac,
+      shieldBudget: Math.round(this.player.shieldBudget),
+      overdriveT: +this.overdriveT.toFixed(1),
+      killsToDrop: CONFIG.drops.killsPerDrop - this.killsSinceDrop,
       pickups: this.pickups?.count ?? 0,
       best: this.bestWave,
       playerPos: this.player.position.toArray().map(n => +n.toFixed(2)),
@@ -218,9 +252,13 @@ export class Game {
 
   debugForceDeath(): boolean {
     if (this.state !== 'playing') return false;
-    const killer = this.enemies.find(e => e.state !== 'dead');
-    if (!killer) return false;
-    this.onPlayerHit(this.player.hp, killer);
+    const killer = this.enemies.find(e => e.state !== 'dead') ?? null;
+    this.debugBypass = true;
+    try {
+      this.onPlayerHit(this.player.hp, killer);
+    } finally {
+      this.debugBypass = false;
+    }
     return true;
   }
 
@@ -228,9 +266,30 @@ export class Game {
     this.player.hp = hp;
   }
 
+  debugSetInvuln(v: boolean): void {
+    this.invuln = v;
+  }
+
   debugGiveSpecial(id: string): void {
     const spec = specById(id);
     if (spec.specialDuration > 0) this.weapon.equipSpecial(spec);
+  }
+
+  debugGiveShield(frac = 0.75): void {
+    this.applyShield(frac);
+  }
+
+  debugGiveOverdrive(): void {
+    this.applyOverdrive();
+  }
+
+  debugPlayerHit(dmg: number): void {
+    this.debugBypass = true;
+    try {
+      this.onPlayerHit(dmg, this.enemies.find(e => e.state !== 'dead') ?? null);
+    } finally {
+      this.debugBypass = false;
+    }
   }
 
   debugSpawnHealHere(): void {
@@ -245,11 +304,92 @@ export class Game {
     this.pickups.spawnAtPoint('weapon', p, specById(id));
   }
 
-  debugSpawnAhead(kind: 'heal' | 'weapon', id: string, dist: number): void {
+  debugSpawnAhead(kind: PickupKind, id: string, dist: number): void {
     const p = this.player.position.clone();
     p.x -= Math.sin(this.player.yaw) * dist;
     p.z -= Math.cos(this.player.yaw) * dist;
     this.pickups.spawnAtPoint(kind, p, id ? specById(id) : null);
+  }
+
+  private applyShield(frac: number): void {
+    this.player.shieldFrac = frac;
+    this.player.shieldT = CONFIG.drops.shieldDuration;
+    this.player.shieldBudget = CONFIG.drops.shieldBudget;
+    this.prevShieldT = this.player.shieldT;
+    this.sfx.shieldUp();
+    const pct = Math.round(frac * 100);
+    this.hud.banner(`AEGIS ${pct}%`);
+    this.hud.feed(`AEGIS ONLINE — ABSORBS ${pct}% OF DAMAGE FOR ${CONFIG.drops.shieldDuration}s`, 'info');
+  }
+
+  private breakShield(shattered: boolean): void {
+    this.player.shieldFrac = 0;
+    this.player.shieldT = 0;
+    this.player.shieldBudget = 0;
+    if (shattered) {
+      this.sfx.shieldBreak();
+      this.hud.feed('AEGIS SHATTERED', 'info');
+    }
+  }
+
+  private applyOverdrive(): void {
+    this.overdriveT = CONFIG.boost.overdriveDuration;
+    this.weapon.damageMul = CONFIG.boost.damageMul;
+    this.weapon.freeFire = true;
+    this.sfx.overdrive();
+    this.hud.banner('OVERDRIVE');
+    this.hud.feed(`OVERDRIVE — ${CONFIG.boost.damageMul}× DAMAGE, UNLIMITED AMMO FOR ${CONFIG.boost.overdriveDuration}s`, 'info');
+  }
+
+  private spawnKillDrop(enemy: Enemy): void {
+    const D = CONFIG.drops;
+    const total = D.shieldWeight + D.overdriveWeight + D.refillWeight;
+    const roll = this.rng.next() * total;
+    const kind: PickupKind =
+      roll < D.shieldWeight ? 'shield'
+        : roll < D.shieldWeight + D.overdriveWeight ? 'overdrive'
+          : 'refill';
+
+    const base = enemy.group.position.clone();
+    base.y = 0;
+    let pos = base;
+    if (!this.arena.isClear(base.x, base.z, 0.8)) {
+      let found: THREE.Vector3 | null = null;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const tx = base.x + Math.cos(a) * 1.6;
+        const tz = base.z + Math.sin(a) * 1.6;
+        if (this.arena.isClear(tx, tz, 0.8)) {
+          found = new THREE.Vector3(tx, 0, tz);
+          break;
+        }
+      }
+      pos = found ?? base;
+    }
+
+    this.pickups.spawnAtPoint(kind, pos);
+    if (kind === 'shield') this.hud.feed('KILL-STREAK DROP — AEGIS CELL DEPLOYED', 'info');
+    else if (kind === 'overdrive') this.hud.feed('KILL-STREAK DROP — OVERDRIVE CORE DEPLOYED', 'info');
+    else this.hud.feed('KILL-STREAK DROP — AMMO CACHE DEPLOYED', 'info');
+  }
+
+  private registerStreakKill(): void {
+    const S = CONFIG.streak;
+    const nowS = performance.now() / 1000;
+    this.killTimes.push(nowS);
+    this.killTimes = this.killTimes.filter(t => nowS - t <= S.windowSec);
+
+    let tierIdx = -1;
+    for (let i = 0; i < S.tiers.length; i++) {
+      if (this.killTimes.length >= S.tiers[i].count) tierIdx = i;
+      else break;
+    }
+    if (tierIdx >= 0 && tierIdx > this.streakAnnounced) {
+      this.streakAnnounced = tierIdx;
+      this.hud.banner(S.tiers[tierIdx].name);
+      this.sfx.streak(tierIdx);
+      this.director.heat = clamp(this.director.heat + S.heatBonus, 0, 1);
+    }
   }
 
   private spawnEnemy(): void {
@@ -285,6 +425,14 @@ export class Game {
       this.shotsHit = 0;
       this.runStartTime = performance.now();
       this.lastPhase = 'intermission';
+      this.overdriveT = 0;
+      this.killsSinceDrop = 0;
+      this.killTimes = [];
+      this.streakAnnounced = -1;
+      this.spreadTimer = 0;
+      this.prevShieldT = 0;
+      this.lastYaw = this.player.yaw;
+      this.lastPitch = this.player.pitch;
       this.director.beginRun();
 
       this.hud.show();
@@ -293,6 +441,8 @@ export class Game {
       this.hud.setWave(1);
       this.hud.setHeat(this.director.heat);
       this.hud.setBoss(null, 0);
+      this.hud.setShield(0, 0);
+      this.hud.setBoost(null, 0, 0);
 
       this.screens.hideAll();
       this.input.resetLockFail();
@@ -306,12 +456,35 @@ export class Game {
     this.input.requestLock(this.canvas);
   }
 
-  private onPlayerDied(killer: Enemy): void {
+  private onPlayerDied(killer: Enemy | null): void {
     this.state = 'dead';
     this.input.fireHeld = false;
     if (document.pointerLockElement) document.exitPointerLock();
 
-    const { record, promoted, newTrait } = this.memory.promoteOnPlayerDeath(killer.data.rivalId, this.rng);
+    let record: RivalRecord;
+    let promoted = false;
+    let newTrait: TraitDef | null = null;
+
+    const killerId = killer?.data.rivalId ?? '';
+    if (killerId && this.memory.get(killerId)) {
+      const promo = this.memory.promoteOnPlayerDeath(killerId, this.rng);
+      record = promo.record;
+      promoted = promo.promoted;
+      newTrait = promo.newTrait;
+    } else {
+      record = {
+        id: '',
+        name: 'THE PIT',
+        tier: 0,
+        traits: [],
+        kills: 0,
+        deaths: 0,
+        taunt: 'The pit itself claims another.',
+        created: Date.now(),
+        lastSeen: Date.now()
+      };
+    }
+
     this.sfx.death();
     this.hud.feed(`${record.name} finishes you.`, 'rival');
 
@@ -349,6 +522,7 @@ export class Game {
     this.lastFrameT = now;
     dt = Math.min(0.25, Math.max(0, dt));
     this.input.captureLook = this.state === 'playing';
+    this.viewmodel.rig.visible = this.state !== 'menu';
 
     if (this.state === 'playing') {
       const steps = Math.max(1, Math.ceil(dt / 0.05));
@@ -361,6 +535,8 @@ export class Game {
       const a = this.menuClock * 0.12;
       this.player.camera.position.set(Math.sin(a) * 17, 9 + Math.sin(a * 0.6) * 1.5, Math.cos(a) * 17);
       this.player.camera.lookAt(0, 1.4, 0);
+    } else {
+      this.effects.hideFlame();
     }
 
     this.effects.update(dt);
@@ -373,9 +549,20 @@ export class Game {
   private simulate(dt: number): void {
     this.player.update(dt, this.input, this.arena);
 
+    const yawDelta = this.player.yaw - this.lastYaw;
+    const pitchDelta = this.player.pitch - this.lastPitch;
+    this.lastYaw = this.player.yaw;
+    this.lastPitch = this.player.pitch;
+
     if (this.input.consumeReload()) {
       if (this.weapon.startReload()) this.sfx.reload();
     }
+
+    const camera = this.player.camera;
+    const dir = camera.getWorldDirection(new THREE.Vector3());
+    const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
+    const origin = camera.position.clone().addScaledVector(dir, 0.35).addScaledVector(right, 0.14);
+    origin.y -= 0.12;
 
     const targets: ShotTarget[] = [];
     for (const e of this.enemies) {
@@ -383,17 +570,12 @@ export class Game {
       targets.push({
         hitCenter: e.center,
         hitRadius: e.hitRadius,
-        onHit: dmg => this.applyDamageToEnemy(e, dmg)
+        onHit: dmg => this.applyDamageToEnemy(e, dmg),
+        onBurn: (dps, dur) => e.ignite(dps, dur)
       });
     }
 
     if (this.input.fireHeld) {
-      const camera = this.player.camera;
-      const dir = camera.getWorldDirection(new THREE.Vector3());
-      const right = new THREE.Vector3().crossVectors(dir, camera.up).normalize();
-      const origin = camera.position.clone().addScaledVector(dir, 0.35).addScaledVector(right, 0.14);
-      origin.y -= 0.12;
-
       const result = this.weapon.fire(origin, dir, targets, {
         arenaColliders: this.arena.colliders,
         effects: this.effects,
@@ -403,8 +585,20 @@ export class Game {
         this.shotsFired++;
         if (result.hitSomething) this.shotsHit++;
         this.player.pitch += result.recoil;
+        this.viewmodel.kick(Math.min(1.4, result.recoil / 0.013));
       }
     }
+
+    const flameActive = this.input.fireHeld
+      && this.weapon.spec.mode === 'cone'
+      && this.weapon.canFire()
+      && this.state === 'playing';
+    const flameLen = Math.min(
+      this.weapon.spec.range,
+      this.weapon.wallDistance(origin, dir, this.arena.colliders)
+    );
+    this.effects.setFlame(origin, dir, flameLen, flameActive, dt);
+
     this.weapon.update(dt);
 
     const playerEye = this.player.eyePosition(new THREE.Vector3()).clone();
@@ -416,16 +610,54 @@ export class Game {
       fx: this.effects,
       sfx: this.sfx,
       rng: this.rng,
-      onPlayerHit: (dmg: number, killer: Enemy) => this.onPlayerHit(dmg, killer)
+      onPlayerHit: (dmg: number, killer: Enemy) => this.onPlayerHit(dmg, killer),
+      onBurnTick: (enemy: Enemy, dmg: number) => this.applyDamageToEnemy(enemy, dmg, true)
     };
 
     for (const e of this.enemies) e.update(dt, ctx);
+
+    this.spreadTimer -= dt;
+    if (this.spreadTimer <= 0) {
+      this.spreadTimer = CONFIG.burnSpread.checkInterval;
+      const burning = this.enemies.filter(e => e.isBurning);
+      for (const b of burning) {
+        for (const o of this.enemies) {
+          if (o.isBurning || o.state !== 'combat') continue;
+          if (o.center.distanceTo(b.center) <= CONFIG.burnSpread.radius
+            && this.rng.chance(CONFIG.burnSpread.chance)) {
+            o.ignite(b.burnDps, b.burnT);
+          }
+        }
+      }
+    }
 
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       if (this.enemies[i].removeMe) {
         this.enemies[i].dispose(this.scene);
         this.enemies.splice(i, 1);
       }
+    }
+
+    if (this.overdriveT > 0) {
+      this.overdriveT = Math.max(0, this.overdriveT - dt);
+      if (this.overdriveT === 0) {
+        this.weapon.damageMul = 1;
+        this.weapon.freeFire = false;
+        this.sfx.expire();
+        this.hud.feed('OVERDRIVE SPENT', 'info');
+      }
+    }
+
+    if (this.prevShieldT > 0 && this.player.shieldT === 0 && this.player.shieldFrac > 0) {
+      this.breakShield(false);
+      this.hud.feed('AEGIS EXPIRED', 'info');
+    }
+    this.prevShieldT = this.player.shieldT;
+
+    const nowS = performance.now() / 1000;
+    if (this.killTimes.length > 0) {
+      this.killTimes = this.killTimes.filter(t => nowS - t <= CONFIG.streak.windowSec);
+      if (this.killTimes.length === 0) this.streakAnnounced = -1;
     }
 
     this.updateDirectorPhase();
@@ -436,10 +668,34 @@ export class Game {
     });
     this.pickups.update(dt, this.player.position);
 
+    this.viewmodel.setWeapon(this.weapon.spec.id);
+    this.viewmodel.update({
+      dt,
+      planarSpeed: this.player.planarSpeed(),
+      grounded: this.player.motor.grounded,
+      yawDelta,
+      pitchDelta,
+      firing: this.input.fireHeld && this.weapon.canFire(),
+      reloading: this.weapon.reloading,
+      overdrive: this.overdriveT > 0
+    });
+
     if (this.weapon.isSpecial && this.weapon.specialT > 0) {
       this.hud.setSpecial(this.weapon.spec.name, this.weapon.specialT / this.weapon.spec.specialDuration, this.weapon.specialT);
     } else {
       this.hud.setSpecial(null, 0, 0);
+    }
+
+    if (this.player.shieldFrac > 0 && this.player.shieldT > 0) {
+      this.hud.setShield(this.player.shieldBudget / CONFIG.drops.shieldBudget, this.player.shieldT);
+    } else {
+      this.hud.setShield(0, 0);
+    }
+
+    if (this.overdriveT > 0) {
+      this.hud.setBoost('OVERDRIVE', this.overdriveT / CONFIG.boost.overdriveDuration, this.overdriveT);
+    } else {
+      this.hud.setBoost(null, 0, 0);
     }
 
     let boss: Enemy | null = null;
@@ -485,10 +741,12 @@ export class Game {
     this.lastSurging = surging;
   }
 
-  private applyDamageToEnemy(enemy: Enemy, dmg: number): 'hit' | 'dead' {
+  private applyDamageToEnemy(enemy: Enemy, dmg: number, silent = false): 'hit' | 'dead' {
     const result = enemy.takeDamage(dmg);
-    this.sfx.hit();
-    this.hud.hitMarker();
+    if (!silent) {
+      this.sfx.hit();
+      this.hud.hitMarker();
+    }
     if (result === 'dead') {
       this.onEnemyKilled(enemy);
     }
@@ -503,12 +761,28 @@ export class Game {
     if (enemy.data.tier >= 2) {
       this.hud.feed(`${enemy.data.name} has fallen. The pit falls silent... briefly.`, 'rival');
     }
+    this.killsSinceDrop++;
+    if (this.killsSinceDrop >= CONFIG.drops.killsPerDrop) {
+      this.killsSinceDrop = 0;
+      this.spawnKillDrop(enemy);
+    }
+    this.registerStreakKill();
   }
 
-  private onPlayerHit(dmg: number, killer: Enemy): void {
+  private onPlayerHit(dmg: number, killer: Enemy | null): void {
     if (this.state !== 'playing') return;
-    const died = this.player.takeDamage(dmg);
-    this.director.registerPlayerDamage(dmg);
+    if (this.invuln && !this.debugBypass) return;
+    let incoming = dmg;
+    if (this.player.shieldT > 0 && this.player.shieldFrac > 0) {
+      const absorbed = Math.min(this.player.shieldBudget, incoming * this.player.shieldFrac);
+      this.player.shieldBudget -= absorbed;
+      incoming = Math.max(0, incoming - absorbed);
+      if (this.player.shieldBudget <= 0.5) this.breakShield(true);
+    }
+    incoming = Math.max(0, Math.round(incoming));
+    if (incoming <= 0) return;
+    const died = this.player.takeDamage(incoming);
+    this.director.registerPlayerDamage(incoming);
     this.sfx.hurt();
     this.hud.damageFlash(1 - this.player.hp / this.player.maxHp + 0.3);
     if (died) this.onPlayerDied(killer);

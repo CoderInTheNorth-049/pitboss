@@ -7,6 +7,7 @@ export interface ShotTarget {
   hitCenter: THREE.Vector3;
   hitRadius: number;
   onHit: (damage: number) => 'hit' | 'dead';
+  onBurn?: (dps: number, duration: number) => void;
 }
 
 export interface WeaponContext {
@@ -22,12 +23,16 @@ export interface FireResult {
   recoil: number;
 }
 
+const MAX_RANGE = 120;
+
 export class Weapon {
   spec: WeaponSpec = DEFAULT_SPEC;
   ammo = DEFAULT_SPEC.magSize;
   reloading = false;
   specialT = 0;
   onSpecialEnd: () => void = () => {};
+  damageMul = 1;
+  freeFire = false;
 
   private reloadT = 0;
   private cooldown = 0;
@@ -76,17 +81,24 @@ export class Weapon {
     this.reloading = false;
     this.bloom = 0;
     this.cooldown = 0;
+    this.damageMul = 1;
+    this.freeFire = false;
   }
 
   canFire(): boolean {
-    return !this.reloading && this.cooldown <= 0 && this.ammo > 0;
+    return !this.reloading && this.cooldown <= 0 && (this.freeFire || this.ammo > 0);
   }
 
   startReload(): boolean {
+    if (this.freeFire) return false;
     if (this.reloading || this.ammo === this.spec.magSize) return false;
     this.reloading = true;
     this.reloadT = this.spec.reloadTime;
     return true;
+  }
+
+  wallDistance(origin: THREE.Vector3, dir: THREE.Vector3, colliders: THREE.Box3[]): number {
+    return this.castWall(origin, dir, colliders);
   }
 
   fire(
@@ -96,7 +108,7 @@ export class Weapon {
     ctx: WeaponContext
   ): FireResult {
     if (!this.canFire()) {
-      if (!this.reloading && this.ammo <= 0) {
+      if (!this.freeFire && !this.reloading && this.ammo <= 0) {
         this.startReload();
         ctx.sfx.reload();
       }
@@ -105,9 +117,13 @@ export class Weapon {
 
     const spec = this.spec;
     this.cooldown = spec.fireInterval;
-    this.ammo--;
+    if (!this.freeFire) this.ammo--;
     this.bloom = Math.min(spec.bloomMax, this.bloom + spec.bloomPerShot);
     this.playSound(ctx.sfx, spec.sound);
+
+    const damage = Math.round(spec.damage * this.damageMul);
+
+    if (spec.mode === 'cone') return this.fireCone(origin, baseDir, targets, ctx, damage);
 
     const wallT = this.castWall(origin, baseDir, ctx.arenaColliders);
     const endPoint = origin.clone().addScaledVector(baseDir, wallT);
@@ -118,9 +134,6 @@ export class Weapon {
 
     for (let p = 0; p < spec.pellets; p++) {
       const dir = this.applySpread(baseDir, spec);
-      const pelletEnd = spec.pellets > 1
-        ? origin.clone().addScaledVector(dir, Math.min(wallT, spec.pierce ? 120 : wallT))
-        : endPoint;
 
       if (spec.pierce) {
         const hits = this.collectHits(origin, dir, targets, wallT);
@@ -133,7 +146,7 @@ export class Weapon {
             spec.tracerColor, spec.tracerLife, spec.tracerWidth
           );
           for (const h of hits) {
-            if (h.onHit(spec.damage) === 'dead') killed = true;
+            if (h.onHit(damage) === 'dead') killed = true;
           }
         } else {
           ctx.effects.tracer(
@@ -141,22 +154,21 @@ export class Weapon {
             origin.clone().addScaledVector(dir, wallT),
             spec.tracerColor, spec.tracerLife, spec.tracerWidth
           );
-          if (wallT < 120) ctx.effects.impact(endPoint, 0x8a8a94);
+          if (wallT < MAX_RANGE) ctx.effects.impact(endPoint, 0x8a8a94);
         }
-        void pelletEnd;
       } else {
         const best = this.nearestHit(origin, dir, targets, wallT);
         const end = best
           ? origin.clone().addScaledVector(dir, best.t)
-          : origin.clone().addScaledVector(dir, wallT);
+          : origin.clone().addScaledVector(baseDir, wallT);
         ctx.effects.tracer(
           origin.clone().addScaledVector(dir, 0.6),
           end, spec.tracerColor, spec.tracerLife, spec.tracerWidth
         );
         if (best) {
           hitSomething = true;
-          if (best.target.onHit(spec.damage) === 'dead') killed = true;
-        } else if (wallT < 120) {
+          if (best.target.onHit(damage) === 'dead') killed = true;
+        } else if (wallT < MAX_RANGE) {
           ctx.effects.impact(end, 0x8a8a94);
         }
       }
@@ -165,9 +177,70 @@ export class Weapon {
     return { fired: true, killed, hitSomething, recoil: spec.recoilKick };
   }
 
+  private fireCone(
+    origin: THREE.Vector3,
+    baseDir: THREE.Vector3,
+    targets: readonly ShotTarget[],
+    ctx: WeaponContext,
+    damage: number
+  ): FireResult {
+    const spec = this.spec;
+    const flatDir = new THREE.Vector3(baseDir.x, 0, baseDir.z).normalize();
+    const wallT = this.castWall(origin, baseDir, ctx.arenaColliders);
+    ctx.effects.muzzleFlash(origin, spec.tracerColor);
+
+    let killed = false;
+    let hitAny = false;
+
+    interface ConeHit {
+      dist: number;
+      angle: number;
+      target: ShotTarget;
+    }
+    const candidates: ConeHit[] = [];
+
+    for (const t of targets) {
+      const toT = t.hitCenter.clone().sub(origin);
+      const dist = toT.length();
+      if (dist > spec.range || dist >= wallT) continue;
+      const flat = new THREE.Vector3(toT.x, 0, toT.z);
+      const angle = flat.lengthSq() > 1e-6 ? flat.normalize().angleTo(flatDir) : 0;
+      candidates.push({ dist, angle, target: t });
+    }
+
+    const primaries = candidates
+      .filter(c => c.angle <= spec.coneAngle)
+      .sort((a, b) => a.dist - b.dist);
+
+    for (const h of primaries) {
+      hitAny = true;
+      if (h.target.onHit(damage) === 'dead') killed = true;
+      if (h.target.onBurn) h.target.onBurn(spec.burnDps * this.damageMul, spec.burnDuration);
+    }
+
+    if (primaries.length > 0 && spec.splashRadius > 0) {
+      const anchor = primaries[0].target.hitCenter;
+      for (const c of candidates) {
+        if (c.angle <= spec.coneAngle) continue;
+        if (c.target.hitCenter.distanceTo(anchor) > spec.splashRadius) continue;
+        hitAny = true;
+        if (c.target.onHit(Math.round(damage * 0.6)) === 'dead') killed = true;
+        if (c.target.onBurn) {
+          c.target.onBurn(spec.burnDps * 0.6 * this.damageMul, spec.burnDuration);
+        }
+      }
+    }
+
+    if (wallT < spec.range) {
+      ctx.effects.impact(origin.clone().addScaledVector(baseDir, wallT), 0x5c4a38);
+    }
+
+    return { fired: true, killed, hitSomething: hitAny, recoil: spec.recoilKick };
+  }
+
   private castWall(origin: THREE.Vector3, dir: THREE.Vector3, colliders: THREE.Box3[]): number {
     const ray = new THREE.Ray(origin, dir);
-    let best = 120;
+    let best = MAX_RANGE;
     const tmp = new THREE.Vector3();
     for (const b of colliders) {
       const p = ray.intersectBox(b, tmp);
@@ -233,7 +306,7 @@ export class Weapon {
 
   private playSound(sfx: Sfx, id: WeaponSoundId): void {
     if (id === 'rail') sfx.rail();
-    else if (id === 'shotgun') sfx.shotgun();
+    else if (id === 'flame') sfx.flame();
     else sfx.shot();
   }
 }

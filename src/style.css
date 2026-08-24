@@ -99,6 +99,33 @@ html, body {
 }
 #special-fill { height: 100%; width: 100%; background: linear-gradient(90deg, var(--accent2), #aef7f1); }
 
+#shield-wrap {
+  position: absolute; left: 32px; bottom: 84px; width: 200px;
+}
+#shield-name {
+  font-size: 13px; font-weight: 800; letter-spacing: 3px; color: #3fa7ff;
+  text-shadow: 0 0 14px rgba(63,167,255,0.6); display: block; margin-bottom: 4px;
+}
+#shield-bar {
+  height: 5px; background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(63,167,255,0.45); transform: skewX(-10deg);
+}
+#shield-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #3fa7ff, #bfe3ff); }
+#shield-wrap.low #shield-name { animation: blink 500ms infinite alternate; }
+
+#boost-wrap {
+  position: absolute; right: 36px; bottom: 158px; text-align: right; width: 180px;
+}
+#boost-name {
+  font-size: 14px; font-weight: 800; letter-spacing: 3px; color: var(--danger);
+  text-shadow: 0 0 14px rgba(255,34,68,0.65); display: block; margin-bottom: 4px;
+}
+#boost-bar {
+  height: 5px; background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,34,68,0.45); transform: skewX(-10deg);
+}
+#boost-fill { height: 100%; width: 100%; background: linear-gradient(90deg, var(--danger), #ff9c7a); }
+
 .pickup-hint {
   color: var(--dim); font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
   margin-top: 2px;

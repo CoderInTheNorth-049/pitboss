@@ -12,7 +12,11 @@ Every rival bot is persistent. Whoever lands the killing blow on you gets **prom
 
 - **Waves + AI director** — heat meter, stress-based pacing, surge events
 - **Nemesis roster** — 5 tiers (GRUNT → TYRANT), 6 traits (SWIFT, BULWARK, DEADEYE, TWINCAST, PHANTOM, BRUISER), procedural names/taunts, persistent W/L records
-- **Special weapons** — SCATTERGATE (6-pellet shotgun) and RAILHAND (piercing lance) drop every 3rd wave + surges; 12s each, then back to the PIT RIFLE
+- **Special weapons** — PYROCLAST (flame cone: short range, hits whole crowds, ignites + spreads) and RAILHAND (piercing lance) drop every 3rd wave + surges; 12s each, then back to the PIT RIFLE
+- **First-person viewmodels** — every weapon has a hand-built model with sway, walk bob, recoil, reload dip and switch pop animations
+- **Burn DoT** — flame-ignited rivals burn for 2s and can spread fire to nearby rivals
+- **Kill-streak drops** — every 8th kill spawns a drop where the enemy died: AEGIS shield (absorbs 65–80% of damage for 10s), OVERDRIVE core (2× damage + unlimited ammo, 6s) or an ammo cache
+- **Kill-streak announcer** — DOUBLE KILL → TRIPLE KILL → RAMPAGE → UNSTOPPABLE banners with crowd roar; each tier stokes the director's heat
 - **Vitality vials** — heal pickup (+30 HP) every wave, 20s timer with shrinking ring + beacon
 - **Share codes** — death screen encodes your run (`PB1-…`); friends paste it on the start screen to compare against their best
 - **Hall of Scars** — local top-5 high-score board (wave, kills, accuracy, time) on the start screen; death screen announces `★ NEW HIGH SCORE ★` or your board rank
@@ -57,9 +61,10 @@ src/
 │   └── shareCode.ts      run ⇄ base36 string encode/decode/describe
 ├── player/player.ts      FPS controller: look, accel/friction, bob, FOV kick
 ├── weapons/
-│   ├── specs.ts          WeaponSpec defs: PIT RIFLE, SCATTERGATE, RAILHAND
-│   └── weapon.ts         spec-driven hitscan: pellets, pierce, bloom, reload,
-│                         special-timer with revert callback
+│   ├── specs.ts          WeaponSpec defs: PIT RIFLE, RAILHAND, PYROCLAST
+│   ├── viewmodel.ts      first-person weapon models: sway/bob/recoil/reload/switch
+│   └── weapon.ts         spec-driven firing: hitscan pellets, pierce, flame cone
+│                         (AoE + burn), bloom, reload, special-timer revert
 ├── enemies/
 │   ├── enemy.ts          FSM bot: rise → hunt/strafe → telegraph → burst fire,
 │                         LOS raycasts, unstuck steering, name sprites
@@ -73,9 +78,10 @@ src/
 │   └── rivals.ts         roster, promotion (tier+trait+taunt), spawn weighting
 ├── world/
 │   ├── arena.ts          geometry, lights, colliders, LOS raycasts, spawn pads
-│   └── pickups.ts        vials + weapon drops: timers, beacons, shrink rings
-├── vfx/effects.ts        pooled tracers/beams/impacts, muzzle light
-├── audio/sfx.ts          WebAudio synth (shots, rail, shotgun, heal, surge…)
+│   └── pickups.ts        vials + weapon/aegis/overdrive/refill drops: timers,
+│                         beacons, shrink rings
+├── vfx/effects.ts        pooled tracers/beams/impacts/embers, flame cone, muzzle light
+├── audio/sfx.ts          WebAudio synth (shots, rail, flame roar, shield, streaks…)
 └── ui/
     ├── hud.ts            HP/ammo/wave/heat/boss-bar/special-timer/killfeed
     └── screens.ts        start/death/roster/pause overlays, share-code UI

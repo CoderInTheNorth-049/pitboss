@@ -4,9 +4,14 @@ import type { RNG } from '../utils/rng';
 import type { WeaponSpec } from '../weapons/specs';
 import { SPECIALS } from '../weapons/specs';
 
+export type PickupKind = 'heal' | 'weapon' | 'shield' | 'overdrive' | 'refill';
+
 export type PickupEvent =
   | { type: 'heal' }
   | { type: 'weapon'; spec: WeaponSpec }
+  | { type: 'shield'; absorbFrac: number }
+  | { type: 'overdrive' }
+  | { type: 'refill' }
   | { type: 'expired' };
 
 export interface PickupCallbacks {
@@ -14,9 +19,28 @@ export interface PickupCallbacks {
 }
 
 const HEAL_COLOR = 0xff3355;
+const SHIELD_COLOR = 0x3fa7ff;
+const OVERDRIVE_COLOR = 0xff2244;
+const REFILL_COLOR = 0x9dff3f;
 const PICKUP_RADIUS = 1.0;
-const HEAL_LIFE = 20;
-const WEAPON_LIFE = 15;
+
+const LIFE: Record<PickupKind, number> = {
+  heal: 20,
+  weapon: 15,
+  shield: 15,
+  overdrive: 12,
+  refill: 15
+};
+
+function colorFor(kind: PickupKind, spec: WeaponSpec | null): number {
+  switch (kind) {
+    case 'heal': return HEAL_COLOR;
+    case 'shield': return SHIELD_COLOR;
+    case 'overdrive': return OVERDRIVE_COLOR;
+    case 'refill': return REFILL_COLOR;
+    default: return spec!.tracerColor;
+  }
+}
 
 class Pickup {
   readonly group = new THREE.Group();
@@ -29,13 +53,18 @@ class Pickup {
   private animT = Math.random() * 10;
   private done = false;
 
-  constructor(kind: 'heal' | 'weapon', spec: WeaponSpec | null, pos: THREE.Vector3) {
-    const color = kind === 'heal' ? HEAL_COLOR : spec!.tracerColor;
-    this.life = kind === 'heal' ? HEAL_LIFE : WEAPON_LIFE;
+  constructor(kind: PickupKind, spec: WeaponSpec | null, pos: THREE.Vector3) {
+    const color = colorFor(kind, spec);
+    this.life = LIFE[kind];
     this.maxLife = this.life;
-    this.event = kind === 'heal' ? { type: 'heal' } : { type: 'weapon', spec: spec! };
+    this.event = Pickup.makeEvent(kind, spec);
 
-    this.core = kind === 'heal' ? this.buildHeart() : this.buildGun(spec!.tracerColor);
+    this.core =
+      kind === 'heal' ? this.buildHeart()
+      : kind === 'shield' ? this.buildShield(color)
+      : kind === 'overdrive' ? this.buildOverdrive(color)
+      : kind === 'refill' ? this.buildRefill(color)
+      : this.buildGun(spec!.tracerColor);
     this.core.position.y = 0.75;
     this.group.add(this.core);
 
@@ -55,6 +84,19 @@ class Pickup {
     this.group.add(beacon);
 
     this.group.position.copy(pos);
+  }
+
+  private static makeEvent(kind: PickupKind, spec: WeaponSpec | null): PickupEvent {
+    switch (kind) {
+      case 'heal': return { type: 'heal' };
+      case 'weapon': return { type: 'weapon', spec: spec! };
+      case 'shield': {
+        const frac = 0.65 + Math.random() * 0.15;
+        return { type: 'shield', absorbFrac: Math.round(frac * 100) / 100 };
+      }
+      case 'overdrive': return { type: 'overdrive' };
+      default: return { type: 'refill' };
+    }
   }
 
   private buildHeart(): THREE.Object3D {
@@ -85,18 +127,95 @@ class Pickup {
     });
     const glow = new THREE.MeshBasicMaterial({ color, blending: THREE.AdditiveBlending, depthWrite: false });
     const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.18, 0.13), mat);
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.09, 0.09), glow);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.075, 0.42, 10), glow);
+    barrel.rotation.x = Math.PI / 2;
     barrel.position.set(0.46, 0.03, 0);
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.24, 0.11), mat);
     grip.position.set(-0.18, -0.17, 0);
     grip.rotation.z = 0.32;
-    const cell = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.15), glow);
-    cell.position.set(0.04, 0.14, 0);
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.34, 10), glow);
+    tank.rotation.z = Math.PI / 2;
+    tank.position.set(0, 0.16, 0);
     const underglow = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.03, 0.17), glow);
     underglow.position.y = -0.12;
-    g.add(body, barrel, grip, cell, underglow);
+    g.add(body, barrel, grip, tank, underglow);
     g.rotation.z = -0.12;
     g.scale.setScalar(1.5);
+    return g;
+  }
+
+  private buildShield(color: number): THREE.Object3D {
+    const g = new THREE.Group();
+    const mat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(color).multiplyScalar(0.4),
+      emissive: color,
+      emissiveIntensity: 1.3,
+      roughness: 0.25,
+      metalness: 0.5
+    });
+    const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.08, 6), mat);
+    shell.rotation.x = Math.PI / 2;
+    const inner = new THREE.Mesh(
+      new THREE.TorusGeometry(0.19, 0.03, 6, 6),
+      new THREE.MeshBasicMaterial({ color, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    inner.position.z = 0.06;
+    const emblem = new THREE.Mesh(
+      new THREE.CircleGeometry(0.14, 6),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })
+    );
+    emblem.position.z = 0.062;
+    emblem.rotation.y = Math.PI;
+    g.add(shell, inner, emblem);
+    g.scale.setScalar(1.6);
+    return g;
+  }
+
+  private buildOverdrive(color: number): THREE.Object3D {
+    const g = new THREE.Group();
+    const mat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(color).multiplyScalar(0.5),
+      emissive: color,
+      emissiveIntensity: 1.8,
+      roughness: 0.3,
+      metalness: 0.35
+    });
+    const shard = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), mat);
+    shard.scale.y = 1.7;
+    const halo = new THREE.Mesh(
+      new THREE.TorusGeometry(0.32, 0.025, 6, 24),
+      new THREE.MeshBasicMaterial({ color, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    halo.position.y = 0.02;
+    g.add(shard, halo);
+    g.scale.setScalar(1.45);
+    return g;
+  }
+
+  private buildRefill(color: number): THREE.Object3D {
+    const g = new THREE.Group();
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x2a2d22,
+      emissive: color,
+      emissiveIntensity: 0.5,
+      roughness: 0.5,
+      metalness: 0.3
+    });
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.3, 0.36), mat);
+    const stripeA = new THREE.Mesh(
+      new THREE.BoxGeometry(0.38, 0.045, 0.1),
+      new THREE.MeshBasicMaterial({ color, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    stripeA.position.y = 0.06;
+    const bolt = new THREE.Mesh(new THREE.OctahedronGeometry(0.09, 0), new THREE.MeshStandardMaterial({
+      color: new THREE.Color(color).multiplyScalar(0.4),
+      emissive: color,
+      emissiveIntensity: 1.6
+    }));
+    bolt.position.set(0, 0.24, 0);
+    bolt.scale.y = 1.8;
+    g.add(crate, stripeA, bolt);
+    g.scale.setScalar(1.4);
     return g;
   }
 
@@ -111,7 +230,7 @@ class Pickup {
     (this.ring.material as THREE.MeshBasicMaterial).opacity = blink * frac;
 
     this.core.position.y = 0.75 + Math.sin(this.animT * 2.4) * 0.12;
-    this.core.rotation.y += dt * 1.6;
+    this.core.rotation.y += dt * (this.event.type === 'overdrive' ? 3.2 : 1.6);
 
     if (this.life <= 0) {
       this.done = true;
@@ -152,15 +271,16 @@ export class PickupManager {
     private callbacks: PickupCallbacks
   ) {}
 
-  spawnAtRandom(kind: 'heal' | 'weapon', spec: WeaponSpec | null = null): void {
+  spawnAtRandom(kind: PickupKind, spec: WeaponSpec | null = null): void {
     const point = this.findOpenPoint();
     if (!point) return;
     this.spawnAtPoint(kind, point, spec);
   }
 
-  spawnAtPoint(kind: 'heal' | 'weapon', point: THREE.Vector3, spec: WeaponSpec | null = null): void {
+  spawnAtPoint(kind: PickupKind, point: THREE.Vector3, spec: WeaponSpec | null = null): void {
     const chosen = kind === 'weapon' ? (spec ?? this.rng.pick(SPECIALS)) : null;
-    const p = new Pickup(kind, chosen, point);
+    const p = new Pickup(kind, chosen, point.clone());
+    p.group.position.y = 0;
     this.scene.add(p.group);
     this.active.push(p);
   }
