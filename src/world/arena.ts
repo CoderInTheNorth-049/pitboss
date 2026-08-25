@@ -6,6 +6,76 @@ export interface SpawnPad {
   ring: THREE.Mesh;
 }
 
+interface ArenaLayout {
+  name: string;
+  blocks: Array<[number, number, number, number, number, number]>;
+}
+
+export const ARENA_LAYOUTS: readonly ArenaLayout[] = [
+  {
+    name: 'THE CROSS',
+    blocks: [
+      [0, -6, 5, 2.3, 2.2, 0x32323c],
+      [0, 6, 5, 2.3, 2.2, 0x32323c],
+      [-8, 0, 2.2, 1.4, 6, 0x282832],
+      [8, 0, 2.2, 1.4, 6, 0x282832],
+      [-13, -11, 3, 2.0, 3, 0x32323c],
+      [13, -11, 3, 2.0, 3, 0x32323c],
+      [-13, 11, 3, 2.0, 3, 0x32323c],
+      [13, 11, 3, 2.0, 3, 0x32323c],
+      [-5, -15, 4.4, 1.2, 2, 0x282832],
+      [5, -15, 4.4, 1.2, 2, 0x282832],
+      [-5, 15, 4.4, 1.2, 2, 0x282832],
+      [5, 15, 4.4, 1.2, 2, 0x282832],
+      [-17, -4, 2, 2.6, 2, 0x2e2e38],
+      [17, 4, 2, 2.6, 2, 0x2e2e38],
+      [17, -13, 2.4, 0.9, 2.4, 0x3a3a46],
+      [-17, 13, 2.4, 0.9, 2.4, 0x3a3a46]
+    ]
+  },
+  {
+    name: 'THE RING',
+    blocks: [
+      [12, 0, 2.4, 2.2, 2.4, 0x32323c],
+      [8.5, 8.5, 2.4, 2.2, 2.4, 0x32323c],
+      [0, 12, 2.4, 2.2, 2.4, 0x32323c],
+      [-8.5, 8.5, 2.4, 2.2, 2.4, 0x32323c],
+      [-12, 0, 2.4, 2.2, 2.4, 0x32323c],
+      [-8.5, -8.5, 2.4, 2.2, 2.4, 0x32323c],
+      [0, -12, 2.4, 2.2, 2.4, 0x32323c],
+      [8.5, -8.5, 2.4, 2.2, 2.4, 0x32323c],
+      [3, 3, 1.7, 1.1, 1.7, 0x282832],
+      [-3, 3, 1.7, 1.1, 1.7, 0x282832],
+      [3, -3, 1.7, 1.1, 1.7, 0x282832],
+      [-3, -3, 1.7, 1.1, 1.7, 0x282832],
+      [16.5, 0, 2, 2.5, 2, 0x2e2e38],
+      [-16.5, 0, 2, 2.5, 2, 0x2e2e38],
+      [0, 17, 3, 1.2, 2, 0x282832],
+      [0, -17, 3, 1.2, 2, 0x282832]
+    ]
+  },
+  {
+    name: 'THE LANES',
+    blocks: [
+      [-7, -7.5, 1.4, 2.3, 11, 0x32323c],
+      [-7, 7.5, 1.4, 2.3, 11, 0x32323c],
+      [7, -7.5, 1.4, 2.3, 11, 0x32323c],
+      [7, 7.5, 1.4, 2.3, 11, 0x32323c],
+      [0, -10.5, 5, 1.2, 2, 0x282832],
+      [0, 10.5, 5, 1.2, 2, 0x282832],
+      [-14, 0, 2, 2.2, 2.4, 0x2e2e38],
+      [14, 0, 2, 2.2, 2.4, 0x2e2e38],
+      [-14, -13, 2.4, 1.0, 2.4, 0x3a3a46],
+      [14, 13, 2.4, 1.0, 2.4, 0x3a3a46],
+      [-14, 13, 2.4, 1.0, 2.4, 0x3a3a46],
+      [14, -13, 2.4, 1.0, 2.4, 0x3a3a46],
+      [0, 0, 3, 1.6, 3, 0x32323c],
+      [-3.5, -16, 3, 1.2, 2, 0x282832],
+      [3.5, 16, 3, 1.2, 2, 0x282832]
+    ]
+  }
+];
+
 export class Arena {
   readonly group = new THREE.Group();
   readonly colliders: THREE.Box3[] = [];
@@ -79,6 +149,7 @@ export class Arena {
     mesh.receiveShadow = true;
     this.group.add(mesh);
     this.raycastTargets.push(mesh);
+    this.coverMeshes.push(mesh);
     this.colliders.push(new THREE.Box3(
       new THREE.Vector3(x - w / 2, 0, z - d / 2),
       new THREE.Vector3(x + w / 2, h, z + d / 2)
@@ -93,6 +164,8 @@ export class Arena {
     this.addBlock(0, -H, H * 2 + t, wallH, t, 0x16161d);
     this.addBlock(H, 0, t, wallH, H * 2 + t, 0x16161d);
     this.addBlock(-H, 0, t, wallH, H * 2 + t, 0x16161d);
+    this.baseColliderCount = this.colliders.length;
+    this.baseTargetCount = this.raycastTargets.length;
     for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
       const strip = new THREE.Mesh(
         new THREE.BoxGeometry(H * 2, 0.18, 0.18),
@@ -112,26 +185,32 @@ export class Arena {
     }
   }
 
-  private buildCover() {
-    const blocks: Array<[number, number, number, number, number, number]> = [
-      [0, -6, 5, 2.3, 2.2, 0x32323c],
-      [0, 6, 5, 2.3, 2.2, 0x32323c],
-      [-8, 0, 2.2, 1.4, 6, 0x282832],
-      [8, 0, 2.2, 1.4, 6, 0x282832],
-      [-13, -11, 3, 2.0, 3, 0x32323c],
-      [13, -11, 3, 2.0, 3, 0x32323c],
-      [-13, 11, 3, 2.0, 3, 0x32323c],
-      [13, 11, 3, 2.0, 3, 0x32323c],
-      [-5, -15, 4.4, 1.2, 2, 0x282832],
-      [5, -15, 4.4, 1.2, 2, 0x282832],
-      [-5, 15, 4.4, 1.2, 2, 0x282832],
-      [5, 15, 4.4, 1.2, 2, 0x282832],
-      [-17, -4, 2, 2.6, 2, 0x2e2e38],
-      [17, 4, 2, 2.6, 2, 0x2e2e38],
-      [17, -13, 2.4, 0.9, 2.4, 0x3a3a46],
-      [-17, 13, 2.4, 0.9, 2.4, 0x3a3a46]
-    ];
-    for (const [x, z, w, h, d, c] of blocks) this.addBlock(x, z, w, h, d, c);
+  private buildCover(): void {
+    for (const [x, z, w, h, d, c] of ARENA_LAYOUTS[0].blocks) this.addBlock(x, z, w, h, d, c);
+    this.addPillars();
+  }
+
+  setLayout(index: number): string {
+    const layout = ARENA_LAYOUTS[Math.max(0, Math.min(ARENA_LAYOUTS.length - 1, index))];
+    for (const mesh of this.coverMeshes) {
+      this.group.remove(mesh);
+      mesh.geometry.dispose();
+      const mat = mesh.material as THREE.Material;
+      mat.dispose();
+    }
+    this.coverMeshes = [];
+    this.colliders.length = this.baseColliderCount;
+    this.raycastTargets.length = this.baseTargetCount;
+    for (const [x, z, w, h, d, c] of layout.blocks) this.addBlock(x, z, w, h, d, c);
+    this.addPillars();
+    return layout.name;
+  }
+
+  private coverMeshes: THREE.Mesh[] = [];
+  private baseColliderCount = 0;
+  private baseTargetCount = 0;
+
+  private addPillars(): void {
     for (const x of [-8, 8]) {
       const pillar = new THREE.Mesh(
         new THREE.BoxGeometry(0.5, 3.2, 0.5),
@@ -141,6 +220,7 @@ export class Arena {
       pillar.castShadow = true;
       this.group.add(pillar);
       this.raycastTargets.push(pillar);
+      this.coverMeshes.push(pillar);
       this.colliders.push(new THREE.Box3(
         new THREE.Vector3(x - 0.25, 0, 9.75),
         new THREE.Vector3(x + 0.25, 3.2, 10.25)

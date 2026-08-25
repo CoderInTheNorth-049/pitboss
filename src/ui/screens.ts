@@ -7,6 +7,8 @@ import { ACTIONS, prettyCode } from '../core/settings';
 import type { Input } from '../core/input';
 import type { BoonDef } from '../core/boons';
 import { MUTATORS } from '../core/mutators';
+import { MILESTONES, type Career } from '../core/career';
+import { MUZZLE_STYLES } from '../core/settings';
 
 export interface DeathScreenData {
   killerName: string;
@@ -60,8 +62,11 @@ export class Screens {
   private settingsEl = document.getElementById('screen-settings')!;
   private controlsTab = document.getElementById('tab-controls') as HTMLButtonElement;
   private accessTab = document.getElementById('tab-access') as HTMLButtonElement;
+  private styleTab = document.getElementById('tab-style') as HTMLButtonElement;
   private panelControls = document.getElementById('panel-controls')!;
   private panelAccess = document.getElementById('panel-access')!;
+  private panelStyle = document.getElementById('panel-style')!;
+  private muzzleOptions = document.getElementById('muzzle-options')!;
   private bindList = document.getElementById('bind-list')!;
   private controlsHelp = document.getElementById('controls-help')!;
   private sensInput = document.getElementById('set-sens') as HTMLInputElement;
@@ -78,16 +83,26 @@ export class Screens {
   private listeningAction: Action | null = null;
   private dropGuide = document.getElementById('drop-guide')!;
   private mutatorChips = document.getElementById('mutator-chips')!;
+  private dailyBtn = document.getElementById('btn-daily')!;
+  private dailyBestLine = document.getElementById('daily-best-line')!;
+  private careerCodeInput = document.getElementById('career-code-input') as HTMLInputElement;
+  private careerImportBtn = document.getElementById('btn-career-import')!;
+  private careerCopyBtn = document.getElementById('btn-career-copy')!;
+  private careerResult = document.getElementById('career-result')!;
+  private milestoneList = document.getElementById('milestone-list')!;
   private draftEl = document.getElementById('screen-draft')!;
   private boonCards = document.getElementById('boon-cards')!;
   private draftSkip = document.getElementById('btn-draft-skip')!;
 
   onBoonPicked: (index: number) => void = () => {};
   onDraftSkip: () => void = () => {};
+  onDailyRun: () => void = () => {};
+  onCareerImport: (code: string) => void = () => {};
+  onCareerCopy: () => void = () => {};
 
   onAccessChanged: () => void = () => {};
 
-  constructor(private settings: Settings, private input: Input) {
+  constructor(private settings: Settings, private input: Input, private career: Career) {
     document.getElementById('btn-enter')!.addEventListener('click', () => { this.onEnterThePit(); });
     document.getElementById('btn-reenter')!.addEventListener('click', () => { this.onReenter(); });
     document.getElementById('btn-roster')!.addEventListener('click', () => this.onRosterOpen(false));
@@ -97,6 +112,12 @@ export class Screens {
     });
     document.getElementById('btn-resume')!.addEventListener('click', () => this.onResume());
     document.getElementById('btn-settings')!.addEventListener('click', () => this.showSettings(false));
+    this.dailyBtn.addEventListener('click', () => this.onDailyRun());
+    this.careerImportBtn.addEventListener('click', () => this.onCareerImport(this.careerCodeInput.value));
+    this.careerCopyBtn.addEventListener('click', () => this.onCareerCopy());
+    this.careerCodeInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') this.onCareerImport(this.careerCodeInput.value);
+    });
     document.getElementById('btn-pause-settings')!.addEventListener('click', () => this.showSettings(true));
     document.getElementById('btn-settings-back')!.addEventListener('click', () => this.closeSettings());
     this.draftSkip.addEventListener('click', () => this.onDraftSkip());
@@ -104,8 +125,9 @@ export class Screens {
       if (this.listeningAction) return;
       this.settings.resetBindings();
     });
-    this.controlsTab.addEventListener('click', () => this.switchTab(true));
-    this.accessTab.addEventListener('click', () => this.switchTab(false));
+    this.controlsTab.addEventListener('click', () => this.switchTab('controls'));
+    this.accessTab.addEventListener('click', () => this.switchTab('access'));
+    this.styleTab.addEventListener('click', () => this.switchTab('style'));
     this.sensInput.addEventListener('input', () =>
       this.settings.setAccess({ mouseSens: Number(this.sensInput.value) }));
     this.fovInput.addEventListener('input', () =>
@@ -123,6 +145,7 @@ export class Screens {
       this.renderBindList();
       this.renderControlsHelp();
       this.renderAccessValues();
+      this.renderStyleOptions();
       this.onAccessChanged();
     });
     this.renderBindList();
@@ -130,6 +153,7 @@ export class Screens {
     this.renderAccessValues();
     this.renderDropGuide();
     this.renderMutatorChips();
+    this.setMilestones(this.career);
 
     const decodeNow = () => this.onDecode(this.pasteInput.value);
     document.getElementById('btn-decode')!.addEventListener('click', decodeNow);
@@ -194,11 +218,46 @@ export class Screens {
     this.draftEl.classList.add('hidden');
   }
 
-  private switchTab(controls: boolean): void {
-    this.controlsTab.classList.toggle('active', controls);
-    this.accessTab.classList.toggle('active', !controls);
-    this.panelControls.classList.toggle('hidden', !controls);
-    this.panelAccess.classList.toggle('hidden', controls);
+  private switchTab(which: 'controls' | 'access' | 'style'): void {
+    this.controlsTab.classList.toggle('active', which === 'controls');
+    this.accessTab.classList.toggle('active', which === 'access');
+    this.styleTab.classList.toggle('active', which === 'style');
+    this.panelControls.classList.toggle('hidden', which !== 'controls');
+    this.panelAccess.classList.toggle('hidden', which !== 'access');
+    this.panelStyle.classList.toggle('hidden', which !== 'style');
+    if (which === 'style') this.renderStyleOptions();
+  }
+
+  private renderStyleOptions(): void {
+    this.muzzleOptions.innerHTML = '';
+    for (const style of MUZZLE_STYLES) {
+      const unlocked = !style.requires || this.career.has(style.requires);
+      const btn = document.createElement('button');
+      btn.className = 'muzzle-btn' + (this.settings.access.muzzle === style.id ? ' active' : '');
+      btn.disabled = !unlocked;
+
+      const swatch = document.createElement('span');
+      swatch.className = 'swatch';
+      swatch.style.background = style.css ?? '#e8e6e0';
+      if (style.css) swatch.style.boxShadow = `0 0 10px ${style.css}`;
+
+      const label = document.createElement('span');
+      label.textContent = style.name;
+
+      const req = document.createElement('small');
+      if (unlocked) {
+        req.textContent = style.requires ? 'UNLOCKED' : 'DEFAULT';
+      } else {
+        const def = MILESTONES.find(m => m.id === style.requires);
+        req.textContent = `LOCKED — ${def ? def.name.toUpperCase() : ''}`;
+      }
+
+      btn.append(swatch, label, req);
+      if (unlocked) {
+        btn.addEventListener('click', () => this.settings.setAccess({ muzzle: style.id }));
+      }
+      this.muzzleOptions.appendChild(btn);
+    }
   }
 
   showSettings(fromPause: boolean): void {
@@ -272,6 +331,7 @@ export class Screens {
       [k(b.reload), 'reload'],
       [k(b.jump), 'jump'],
       [k(b.sprint), 'sprint'],
+      [k(b.crouch), 'crouch'],
       ['ESC', 'pause']
     ];
     for (const [key, label] of parts) {
@@ -383,6 +443,42 @@ export class Screens {
   showStart(): void {
     this.hideAll();
     this.startEl.classList.remove('hidden');
+  }
+
+  setDailyBest(wave: number): void {
+    if (wave > 0) {
+      this.dailyBestLine.textContent = `TODAY'S DAILY BEST — WAVE ${wave}`;
+      this.dailyBestLine.classList.remove('hidden');
+    } else {
+      this.dailyBestLine.classList.add('hidden');
+    }
+  }
+
+  setMilestones(career: Career): void {
+    this.milestoneList.innerHTML = '';
+    for (const m of MILESTONES) {
+      const unlocked = career.has(m.id);
+      const chip = document.createElement('span');
+      chip.className = unlocked ? 'ms-chip unlocked' : 'ms-chip';
+      chip.textContent = m.name;
+      chip.title = m.desc;
+      this.milestoneList.appendChild(chip);
+    }
+  }
+
+  setCareerResult(text: string, good: boolean): void {
+    this.careerResult.textContent = text;
+    this.careerResult.classList.toggle('good', good);
+    this.careerResult.classList.toggle('bad', !good);
+  }
+
+  setCareerInput(value: string): void {
+    this.careerCodeInput.value = value;
+    this.careerCodeInput.select();
+  }
+
+  get careerInput(): string {
+    return this.careerCodeInput.value;
   }
 
   showPause(): void {
@@ -518,7 +614,7 @@ function daysAgo(dayStamp: number): string {
   return diff === 0 ? 'today' : `${diff}d ago`;
 }
 
-type GuideIcon = 'heart' | 'gun' | 'flame' | 'turret' | 'shield' | 'shard' | 'cage' | 'crate';
+type GuideIcon = 'heart' | 'gun' | 'flame' | 'turret' | 'shield' | 'shard' | 'cage' | 'crate' | 'mystery';
 
 interface GuideEntry {
   icon: GuideIcon;
@@ -528,14 +624,15 @@ interface GuideEntry {
 }
 
 const DROP_GUIDE: readonly GuideEntry[] = [
-  { icon: 'heart',  color: '#ff3355', label: 'VITALITY VIAL', desc: '+30 VITALS · ONE EVERY WAVE' },
-  { icon: 'gun',    color: '#35e0d6', label: 'RAILHAND',      desc: 'PIERCES ALL IN A LINE · 12s' },
-  { icon: 'flame',  color: '#ff6a1a', label: 'PYROCLAST',     desc: 'FLAME CONE · BURNS CROWDS · 12s' },
-  { icon: 'turret', color: '#c15cff', label: 'WARDEN',        desc: 'AUTO-TURRET AT YOUR FEET · 20s' },
-  { icon: 'shield', color: '#3fa7ff', label: 'AEGIS',         desc: 'ABSORBS 65–80% DAMAGE · 10s' },
-  { icon: 'shard',  color: '#ff2244', label: 'OVERDRIVE',     desc: '2× DMG + INFINITE AMMO · 6s' },
-  { icon: 'cage',   color: '#ffd23f', label: 'BULWARK',       desc: 'TOTAL INVULNERABILITY · 5s' },
-  { icon: 'crate',  color: '#9dff3f', label: 'AMMO CACHE',    desc: 'INSTANT FULL MAGAZINE' }
+  { icon: 'heart',   color: '#ff3355', label: 'VITALITY VIAL', desc: '+30 VITALS · ONE EVERY WAVE' },
+  { icon: 'gun',     color: '#35e0d6', label: 'RAILHAND',      desc: 'PIERCES ALL IN A LINE · 12s' },
+  { icon: 'flame',   color: '#ff6a1a', label: 'PYROCLAST',     desc: 'FLAME CONE · BURNS CROWDS · 12s' },
+  { icon: 'turret',  color: '#c15cff', label: 'WARDEN',        desc: 'AUTO-TURRET AT YOUR FEET · 20s' },
+  { icon: 'shield',  color: '#3fa7ff', label: 'AEGIS',         desc: 'ABSORBS 65–80% DAMAGE · 10s' },
+  { icon: 'shard',   color: '#ff2244', label: 'OVERDRIVE',     desc: '2× DMG + INFINITE AMMO · 6s' },
+  { icon: 'cage',    color: '#ffd23f', label: 'BULWARK',       desc: 'TOTAL INVULNERABILITY · 5s' },
+  { icon: 'crate',   color: '#9dff3f', label: 'AMMO CACHE',    desc: 'INSTANT FULL MAGAZINE' },
+  { icon: 'mystery', color: '#ff8adf', label: 'MYSTERY CRATE', desc: 'RANDOM TREAT INSIDE' }
 ];
 
 const GUIDE_ICONS: Record<GuideIcon, string> = {
@@ -546,5 +643,6 @@ const GUIDE_ICONS: Record<GuideIcon, string> = {
   shield: '<path d="M12 2l8 3v6c0 5-3.4 9.4-8 11-4.6-1.6-8-6-8-11V5z"/>',
   shard: '<polygon points="12,2 19,12 12,22 5,12"/>',
   cage: '<polygon points="12,1.5 22.5,12 12,22.5 1.5,12" fill="none" stroke-width="1.8"/><polygon points="12,7 17,12 12,17 7,12"/>',
-  crate: '<rect x="4" y="6" width="16" height="12.5" rx="1"/><rect x="4" y="10.6" width="16" height="2.2" fill="#0b0b0e" opacity="0.55"/>'
+  crate: '<rect x="4" y="6" width="16" height="12.5" rx="1"/><rect x="4" y="10.6" width="16" height="2.2" fill="#0b0b0e" opacity="0.55"/>',
+  mystery: '<rect x="4" y="5" width="16" height="14" rx="1.5" fill="none" stroke-width="2"/><path d="M9.2 10a2.8 2.8 0 1 1 4 2.5c-.9.5-1.2 1-1.2 2" fill="none" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="17.2" r="1.4" stroke="none"/>'
 };

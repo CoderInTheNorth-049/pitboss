@@ -39,6 +39,8 @@ export class Sentry<T extends SentryEnemyLike = SentryEnemyLike> {
   private kick = 0;
   private done = false;
   private dmgMul: number;
+  private retargetT = 0;
+  private target: T | null = null;
 
   constructor(pos: THREE.Vector3, durMul = 1, dmgMul = 1) {
     this.life = S.duration * durMul;
@@ -127,15 +129,15 @@ export class Sentry<T extends SentryEnemyLike = SentryEnemyLike> {
     const origin = new THREE.Vector3();
     this.muzzle.getWorldPosition(origin);
 
-    let best: T | null = null;
-    let bestD = Infinity;
-    for (const e of ctx.enemies) {
-      if (e.state === 'dead') continue;
-      const d = origin.distanceTo(e.center);
-      if (d > S.range || d >= bestD) continue;
-      if (ctx.arena.losBlocked(origin, e.center)) continue;
-      best = e;
-      bestD = d;
+    this.retargetT -= dt;
+    if (this.retargetT <= 0 || !this.target || this.target.state === 'dead') {
+      this.retargetT = 0.15;
+      this.target = this.acquireTarget(ctx, origin);
+    }
+    let best = this.target;
+    if (best && origin.distanceTo(best.center) > S.range) {
+      this.target = null;
+      best = null;
     }
 
     if (best) {
@@ -165,6 +167,20 @@ export class Sentry<T extends SentryEnemyLike = SentryEnemyLike> {
       this.done = true;
       ctx.sfx.sentryDown();
     }
+  }
+
+  private acquireTarget(ctx: SentryContext<T>, origin: THREE.Vector3): T | null {
+    let best: T | null = null;
+    let bestD = Infinity;
+    for (const e of ctx.enemies) {
+      if (e.state === 'dead') continue;
+      const d = origin.distanceTo(e.center);
+      if (d > S.range || d >= bestD) continue;
+      if (ctx.arena.losBlocked(origin, e.center)) continue;
+      best = e;
+      bestD = d;
+    }
+    return best;
   }
 
   dispose(scene: THREE.Scene): void {

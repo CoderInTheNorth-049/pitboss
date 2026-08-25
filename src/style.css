@@ -160,6 +160,13 @@ html, body {
   width: 300px; text-align: center;
 }
 #paste-code::placeholder { color: var(--dim); font-size: 11px; letter-spacing: 1px; }
+
+#career-code-input {
+  background: rgba(255,255,255,0.05); border: 1px dashed rgba(255,210,63,0.35);
+  color: var(--gold); padding: 8px 12px; font-family: monospace; font-size: 12px;
+  width: 360px; max-width: 70vw; text-align: center;
+}
+#career-code-input::placeholder { color: var(--dim); font-size: 10.5px; letter-spacing: 1px; }
 .decode-result {
   font-size: 12px; letter-spacing: 1px; color: var(--dim); min-height: 16px;
   text-transform: uppercase; text-align: center;
@@ -221,13 +228,15 @@ html, body {
 /* ---------- Screens ---------- */
 
 .screen {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 18px; background: radial-gradient(ellipse at 50% 30%, #17171f 0%, var(--bg) 70%);
+  display: flex; flex-direction: column; align-items: center; justify-content: safe center;
+  gap: 14px; padding: 26px 20px;
+  background: radial-gradient(ellipse at 50% 30%, #17171f 0%, var(--bg) 70%);
   z-index: 20;
+  overflow-y: auto;
 }
 
 .title {
-  font-size: clamp(64px, 12vw, 130px); font-weight: 900; letter-spacing: 14px;
+  font-size: clamp(48px, min(12vw, 13vh), 130px); font-weight: 900; letter-spacing: 14px;
   color: var(--ink);
 }
 .title span { color: var(--accent); }
@@ -399,8 +408,8 @@ html, body {
 /* ---------- Drop guide (start screen) ---------- */
 
 .drop-guide {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 300px)); gap: 7px 24px;
-  max-width: 640px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 7px 20px;
+  width: min(660px, 92vw);
 }
 .guide-row {
   display: flex; align-items: center; gap: 10px; text-align: left;
@@ -481,6 +490,39 @@ html, body {
   padding: 3px 10px; border: 1px solid var(--mc, var(--dim));
   color: var(--mc, var(--dim)); background: rgba(255,255,255,0.03);
 }
+
+.btn-ghost.daily { color: var(--accent2); border-color: rgba(53,224,214,0.45); }
+.btn-ghost.daily:hover { color: var(--bg); background: var(--accent2); }
+
+.daily-best-line { color: var(--gold); font-size: 12px; letter-spacing: 2px; text-transform: uppercase; }
+
+.career-title {
+  font-size: 11px; font-weight: 900; letter-spacing: 4px; color: var(--dim);
+  margin-top: 6px;
+}
+.milestone-list { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 620px; }
+.ms-chip {
+  font-size: 10px; font-weight: 800; letter-spacing: 2px;
+  padding: 4px 11px; color: var(--dim); border: 1px dashed rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.02);
+}
+.ms-chip.unlocked {
+  color: var(--gold); border: 1px solid var(--gold);
+  text-shadow: 0 0 10px rgba(255,194,51,0.5); background: rgba(255,194,51,0.06);
+}
+
+.muzzle-options { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.muzzle-btn {
+  pointer-events: auto;
+  font-family: inherit; display: flex; flex-direction: column; align-items: center; gap: 7px;
+  width: 96px; padding: 14px 8px 10px; cursor: pointer;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.18);
+  color: var(--dim); font-size: 11px; font-weight: 800; letter-spacing: 2px;
+}
+.muzzle-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); }
+.muzzle-btn.active { border-color: var(--accent2); color: var(--accent2); background: rgba(53,224,214,0.07); }
+.muzzle-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.muzzle-btn .swatch { width: 22px; height: 22px; border-radius: 50%; }
 
 @media (max-width: 720px) {
   .title { letter-spacing: 6px; }

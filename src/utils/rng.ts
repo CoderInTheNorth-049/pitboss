@@ -1,3 +1,16 @@
+export function hashString(str: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+export function todayStamp(): number {
+  return Math.floor(Date.now() / 86400000);
+}
+
 export class RNG {
   private s: number;
 
@@ -11,6 +24,10 @@ export class RNG {
 
   static fromSeed(seed: number): RNG {
     return new RNG(seed);
+  }
+
+  reseed(seed: number): void {
+    this.s = seed >>> 0;
   }
 
   next(): number {

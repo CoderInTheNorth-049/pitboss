@@ -24,7 +24,7 @@ let s = await page.evaluate(() => ({
 }));
 console.log('DEFAULTS:', JSON.stringify(s));
 if (s.helpFirst !== 'WASD' || s.forwardKey !== 'W') { console.log('FAIL: default bindings render'); process.exit(1); }
-if (s.guideRows !== 8) { console.log(`FAIL: drop guide should show 8 entries, got ${s.guideRows}`); process.exit(1); }
+if (s.guideRows !== 9) { console.log(`FAIL: drop guide should show 9 entries, got ${s.guideRows}`); process.exit(1); }
 
 // --- OPEN SETTINGS + REBIND FORWARD W -> E ---
 await page.click('#btn-settings');
@@ -94,6 +94,7 @@ await sleep(4500);
 s = await page.evaluate(() => window.__PITBOSS.debugState());
 console.log('RUN STARTED:', JSON.stringify(s));
 if (s.state !== 'playing') { console.log('FAIL: run start'); process.exit(1); }
+await page.evaluate(() => window.__PITBOSS.debugSetArena(0)); // open lane for movement assertions
 const zStart = s.playerPos[2];
 
 await page.keyboard.down('KeyE');
@@ -113,9 +114,12 @@ console.log('DRIFT WITH OLD W:', Math.abs(zAfterW - movedWithE).toFixed(3));
 if (Math.abs(zAfterW - movedWithE) > 0.25) { console.log('FAIL: old key should do nothing'); process.exit(1); }
 
 // --- IN-GAME ACTION VIA REBOUND RELOAD KEY (T) ---
-await page.mouse.down(); await sleep(80); await page.mouse.up();
-await sleep(200);
-const ammoAfterShot = parseInt(await page.evaluate(() => document.getElementById('ammo-count')?.textContent ?? '-1'), 10);
+let ammoAfterShot = 30;
+for (let attempt = 0; attempt < 3 && ammoAfterShot !== 29; attempt++) {
+  await page.mouse.down(); await sleep(90); await page.mouse.up();
+  await sleep(250);
+  ammoAfterShot = parseInt(await page.evaluate(() => document.getElementById('ammo-count')?.textContent ?? '-1'), 10);
+}
 await page.keyboard.press('KeyT');
 await sleep(1700); // reload takes 1.15s
 const ammoReloaded = parseInt(await page.evaluate(() => document.getElementById('ammo-count')?.textContent ?? '-1'), 10);

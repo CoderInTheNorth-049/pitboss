@@ -32,9 +32,11 @@
       <p class="tagline">The bots remember. Do you?</p>
       <button id="btn-enter" class="btn-primary">ENTER THE PIT</button>
       <div class="btn-row">
+        <button id="btn-daily" class="btn-ghost daily">DAILY RUN</button>
         <button id="btn-roster" class="btn-ghost">RIVAL ROSTER</button>
         <button id="btn-settings" class="btn-ghost">SETTINGS</button>
       </div>
+      <p id="daily-best-line" class="daily-best-line hidden"></p>
       <div id="controls-help" class="controls-help">
         <span><b>WASD</b> move</span><span><b>MOUSE</b> aim</span><span><b>LMB</b> fire</span>
         <span><b>R</b> reload</span>        <span><b>SPACE</b> jump</span><span><b>SHIFT</b> sprint</span><span><b>ESC</b> pause</span>
@@ -53,6 +55,14 @@
         <button id="btn-decode" class="btn-ghost">DECODE</button>
       </div>
       <p id="decode-result" class="decode-result"></p>
+      <p class="career-title">CAREER — MILESTONES &amp; COSMETICS</p>
+      <div id="milestone-list" class="milestone-list"></div>
+      <button id="btn-career-copy" class="btn-ghost">COPY MY CODE — CAREER + SETTINGS</button>
+      <div class="share-row">
+        <input id="career-code-input" placeholder="PASTE A CODE TO RESTORE CAREER + SETTINGS HERE" maxlength="120" />
+        <button id="btn-career-import" class="btn-ghost">IMPORT</button>
+      </div>
+      <p id="career-result" class="decode-result"></p>
     </div>
 
     <div id="screen-death" class="screen layer hidden">
@@ -96,6 +106,7 @@
       <div class="settings-tabs">
         <button id="tab-controls" class="settings-tab active">CONTROLS</button>
         <button id="tab-access" class="settings-tab">ACCESSIBILITY</button>
+        <button id="tab-style" class="settings-tab">STYLE</button>
       </div>
       <div id="panel-controls" class="settings-panel">
         <div id="bind-list"></div>
@@ -110,6 +121,10 @@
         <label class="acc-row toggle"><span>INVERT Y AXIS</span><input id="set-invert" type="checkbox" /></label>
         <label class="acc-row toggle"><span>REDUCED FLASHING</span><input id="set-flash" type="checkbox" /></label>
         <p class="settings-hint">TELEGRAPHS NEVER RELY ON COLOR ALONE — SHAPE, MOTION AND AUDIO ALWAYS CARRY THE WARNING.</p>
+      </div>
+      <div id="panel-style" class="settings-panel hidden">
+        <p class="settings-hint">MUZZLE COLORS — UNLOCKED THROUGH MILESTONES. PURE STYLE, NO POWER.</p>
+        <div id="muzzle-options" class="muzzle-options"></div>
       </div>
       <button id="btn-settings-back" class="btn-primary">BACK</button>
     </div>

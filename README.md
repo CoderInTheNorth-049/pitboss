@@ -13,6 +13,12 @@ Every rival bot is persistent. Whoever lands the killing blow on you gets **prom
 - **Waves + AI director** — heat meter, stress-based pacing, surge events
 - **Wave mutators** — most waves (75% from wave 2) roll a rule-twist: LOW GRAVITY, GLASS CANNON (2× damage both ways), SWARM (2× quota, weaker rivals), BLINK, BOUNTY (loot every 4th kill), DARK ZONE (fog closes in), VAMPIRE (kills heal); announced with banner + HUD chip
 - **Boon drafts** — after every cleared wave the game freezes and offers 3 boons (pick 1 or skip for +25 vitals): move speed, mag size, headshot power, burn, sentry tuning, max vitals, drop rate, reload speed, kill-leech and more — stack a different build every run (all neutral-ish by design)
+- **Arena variants** — 3 cover layouts (THE CROSS, THE RING, THE LANES); daily runs fix the layout, normal runs roll one each run
+- **THE PITBOSS mini-boss** — every 5th wave a named TYRANT-tier boss enters with 2.2× vitality; bring it down for +30 vitals and double loot
+- **Mystery crates** — rare pink drop, always a treat: vial surge, Aegis, Overdrive, a Warden turret, or a 10% JACKPOT (Bulwark + Overdrive)
+- **Daily runs** — one button, same seed for everyone that day: same arena, same mutator sequence, fair comparison; daily runs emit `PB2-…-d` share codes and track a per-day best
+- **Milestones + cosmetics** — 10 achievements (FIRST BLOOD → CROWD PLEASER) with toasts; unlock muzzle-color styles in SETTINGS → STYLE (pure style, no power)
+- **Career code** — `PBC1-…` checksummed code on the start screen carries milestones + counters to any other browser; no account, no crypto lib, just paste to continue
 - **Nemesis roster** — 5 tiers (GRUNT → TYRANT), 6 traits (SWIFT, BULWARK, DEADEYE, TWINCAST, PHANTOM, BRUISER), procedural names/taunts, persistent W/L records
 - **Special weapons** — PYROCLAST (flame cone: short range, hits whole crowds, ignites + spreads) and RAILHAND (piercing lance) drop every 3rd wave + surges; 12s each, then back to the PIT RIFLE
 - **WARDEN sentry** — violet turret drop deploys instantly where claimed; auto-targets nearest rival with LOS inside its visible 25m range ring, 3× rifle damage per shot; kills feed your streaks and drops
@@ -51,6 +57,7 @@ Controls: **WASD** move · **MOUSE** aim · **LMB** fire · **R** reload · **SP
 | `npm run test:hall` | High-score board: ranking, ties, persistence |
 | `npm run test:settings` | Rebind WASD→E, conflict swap, accessibility sliders, persistence, reset |
 | `npm run test:variety` | Mutator effects (glass cannon, low gravity, swarm, dark zone), boon stacking, draft pick/skip flow, seeded determinism |
+| `npm run test:progression` | Arena layouts, mystery crate, wave-5 boss kill, daily run + PB2 code, career code export/import |
 Tests use `puppeteer-core` driving your local Chrome (`CHROME_PATH` env to override) against a running dev server (`TEST_URL` env to override, default `http://localhost:5199`). Start one with `npx vite --port 5199` first. Debug hooks (`window.__PITBOSS`) are exposed in dev mode, or on any build via `?debug=1`.
 
 ## Architecture
@@ -68,7 +75,8 @@ src/
 │   ├── mods.ts           run-modifier aggregation: boon stacks + wave mutator multipliers
 │   ├── mutators.ts       wave mutator definitions (low gravity, glass cannon, swarm…)
 │   ├── boons.ts          boon draft definitions (perks picked after each wave)
-│   └── shareCode.ts      run ⇄ base36 string encode/decode/describe
+│   ├── career.ts         milestones, lifetime counters, portable PBC1 career code
+│   └── shareCode.ts      run ⇄ base36 string encode/decode/describe (PB1 + PB2 daily)
 ├── player/player.ts      FPS controller: look, accel/friction, bob, FOV kick
 ├── weapons/
 │   ├── specs.ts          WeaponSpec defs: PIT RIFLE, RAILHAND, PYROCLAST

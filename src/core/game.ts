@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config';
-import { RNG } from '../utils/rng';
-import { Arena } from '../world/arena';
+import { RNG, hashString, todayStamp } from '../utils/rng';
+import { Arena, ARENA_LAYOUTS } from '../world/arena';
 import { Player } from '../player/player';
 import { Input } from './input';
 import { Weapon } from '../weapons/weapon';
 import type { ShotTarget } from '../weapons/weapon';
 import { ViewModel } from '../weapons/viewmodel';
 import { Enemy } from '../enemies/enemy';
-import { TIERS, buildStats } from '../enemies/traits';
+import { TIERS, buildStats, TRAIT_POOL } from '../enemies/traits';
 import type { TraitDef } from '../enemies/traits';
 import { spawnLine } from '../enemies/taunts';
 import { Director } from '../ai/director';
@@ -23,9 +23,10 @@ import { PickupManager, type PickupEvent, type PickupKind } from '../world/picku
 import { Sentry } from '../world/sentry';
 import { specById } from '../weapons/specs';
 import { HighScores } from './highscores';
-import { Settings } from './settings';
+import { Settings, MUZZLE_STYLES } from './settings';
 import { RunMods } from './mods';
 import { BOONS, boonById, type BoonDef } from './boons';
+import { Career, type MilestoneDef } from './career';
 import { encodeRun, decodeRun, describeRun } from './shareCode';
 import { clamp } from '../utils/math';
 
@@ -42,6 +43,7 @@ type GameState = 'menu' | 'playing' | 'dead' | 'paused' | 'draft';
 export class Game {
   readonly settings = new Settings();
   readonly mods = new RunMods();
+  readonly career = new Career();
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private arena: Arena;
@@ -89,6 +91,9 @@ export class Game {
   private invulnAura: THREE.Mesh;
   private debugBypass = false;
   private draftChoices: BoonDef[] = [];
+  private isDailyRun = false;
+  private arenaLayout = 0;
+  private bossAlive = false;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -109,7 +114,7 @@ export class Game {
     this.player.camera.add(this.viewmodel.rig);
     this.viewmodel.setWeapon(this.weapon.spec.id);
 
-    this.screens = new Screens(this.settings, this.input);
+    this.screens = new Screens(this.settings, this.input, this.career);
     this.input.applySettings(this.settings);
     this.input.attach(canvas);
     this.bindUi();
@@ -117,6 +122,35 @@ export class Game {
     this.applyAccess();
     this.screens.onBoonPicked = i => this.closeDraft(this.draftChoices[i] ?? null);
     this.screens.onDraftSkip = () => this.closeDraft(null);
+    this.screens.onDailyRun = () => this.startRun(true);
+    this.screens.onCareerImport = code => {
+      const result = this.career.importCode(code);
+      this.sfx.ui();
+      if (result === null) {
+        this.screens.setCareerResult('INVALID CAREER CODE', false);
+        return;
+      }
+      if (result.settingsSegment) {
+        const ok = this.settings.importFromCode(result.settingsSegment);
+        this.screens.setCareerResult(
+          ok ? `IMPORTED — ${result.imported} MILESTONES + SETTINGS` : `IMPORTED — ${result.imported} MILESTONES (SETTINGS SEGMENT INVALID)`,
+          true
+        );
+      } else {
+        this.screens.setCareerResult(result.imported > 0 ? `IMPORTED — ${result.imported} NEW MILESTONES` : 'ALREADY UP TO DATE', true);
+      }
+      this.screens.setMilestones(this.career);
+    };
+    this.screens.onCareerCopy = () => {
+      const code = this.career.exportCode(this.settings.exportForCode());
+      this.screens.setCareerInput(code);
+      navigator.clipboard?.writeText(code).then(
+        () => this.screens.setCareerResult('CODE COPIED — CAREER + SETTINGS INCLUDED', true),
+        () => this.screens.setCareerResult('CODE PLACED IN THE BOX — SELECT IT AND COPY', true)
+      );
+      this.sfx.ui();
+    };
+    this.career.onMilestone = def => this.announceMilestone(def);
 
     this.invulnAura = new THREE.Mesh(
       new THREE.SphereGeometry(1.05, 20, 16),
@@ -131,12 +165,22 @@ export class Game {
     window.addEventListener('resize', () => this.onResize());
   }
 
+  private refreshStartScreen(): void {
+    this.screens.setHall(this.highscores.top());
+    this.screens.setMilestones(this.career);
+    this.screens.setDailyBest(this.readDailyBest());
+  }
+
   private applyAccess(): void {
     const a = this.settings.access;
     this.player.setBaseFov(a.fov);
     this.sfx.setVolume(a.volume);
     this.hud.setCrosshairScale(a.crosshairScale);
     this.hud.reducedFlash = a.reducedFlash;
+    const style = MUZZLE_STYLES.find(m => m.id === a.muzzle);
+    const unlocked = !style || !style.requires || this.career.has(style.requires);
+    this.weapon.muzzleOverride = unlocked ? (style?.color ?? null) : null;
+    this.hud.setCrosshairColor(unlocked ? (style?.css ?? null) : null);
   }
 
   private bindUi(): void {
@@ -153,6 +197,7 @@ export class Game {
         this.screens.showDeath(this.lastDeathData);
       } else {
         this.screens.showStart();
+        this.refreshStartScreen();
       }
       this.screens.setHall(this.highscores.top());
     };
@@ -198,6 +243,8 @@ export class Game {
     });
 
     this.screens.setHall(this.highscores.top());
+    this.screens.setMilestones(this.career);
+    this.screens.setDailyBest(this.readDailyBest());
 
     const debugEnabled = import.meta.env.DEV || new URLSearchParams(window.location.search).has('debug');
     if (debugEnabled) {
@@ -228,6 +275,8 @@ export class Game {
           this.applyInvuln();
         } else if (ev.type === 'sentry') {
           this.deploySentry(ev.pos);
+        } else if (ev.type === 'mystery') {
+          this.openMystery(ev.pos);
         } else if (ev.type === 'refill') {
           this.weapon.ammo = this.weapon.magSize();
           this.weapon.reloading = false;
@@ -285,6 +334,9 @@ export class Game {
       mutator: this.mods.mutator?.id ?? null,
       boons: this.mods.boonEntries(),
       maxHp: this.player.maxHp,
+      arena: this.arenaLayout,
+      daily: this.isDailyRun,
+      boss: this.bossAlive,
       lastSpecial: this.pickups?.lastSpecial ?? null,
       killsToDrop: CONFIG.drops.killsPerDrop - this.killsSinceDrop,
       pickups: this.pickups?.count ?? 0,
@@ -527,6 +579,33 @@ export class Game {
     this.hud.feed(`OVERDRIVE — ${CONFIG.boost.damageMul}× DAMAGE, UNLIMITED AMMO FOR ${CONFIG.boost.overdriveDuration}s`, 'info');
   }
 
+  private openMystery(pos: THREE.Vector3): void {
+    this.career.bump({ cratesOpened: 1 });
+    this.effects.spawnRing(pos.clone().setY(0.1), '#ff8adf');
+    this.sfx.powerup();
+    const roll = this.rng.next();
+    if (roll < 0.10) {
+      this.career.bump({ jackpots: 1 });
+      this.hud.banner('JACKPOT');
+      this.hud.feed('MYSTERY CRATE — JACKPOT! BULWARK + OVERDRIVE', 'info');
+      this.applyInvuln();
+      this.applyOverdrive();
+    } else if (roll < 0.30) {
+      this.hud.feed('MYSTERY CRATE — WARDEN TURRET DEPLOYED', 'info');
+      this.deploySentry(pos);
+    } else if (roll < 0.50) {
+      this.hud.feed('MYSTERY CRATE — AEGIS CELL', 'info');
+      this.applyShield(0.75);
+    } else if (roll < 0.70) {
+      this.hud.feed('MYSTERY CRATE — OVERDRIVE CORE', 'info');
+      this.applyOverdrive();
+    } else {
+      this.player.heal(40);
+      this.hud.feed('MYSTERY CRATE — VIAL SURGE, +40 VITALS', 'info');
+      this.sfx.heal();
+    }
+  }
+
   private applyInvuln(): void {
     this.invulnT = CONFIG.boost.invulnDuration + this.mods.bulwarkDurAdd;
     this.invuln = true;
@@ -551,14 +630,15 @@ export class Game {
 
   private spawnKillDrop(enemy: Enemy): void {
     const D = CONFIG.drops;
-    const total = D.shieldWeight + D.overdriveWeight + D.refillWeight + D.invulnWeight + D.sentryWeight;
+    const total = D.shieldWeight + D.overdriveWeight + D.refillWeight + D.invulnWeight + D.sentryWeight + D.mysteryWeight;
     const roll = this.rng.next() * total;
     const kind: PickupKind =
       roll < D.shieldWeight ? 'shield'
         : roll < D.shieldWeight + D.overdriveWeight ? 'overdrive'
           : roll < D.shieldWeight + D.overdriveWeight + D.refillWeight ? 'refill'
             : roll < D.shieldWeight + D.overdriveWeight + D.refillWeight + D.invulnWeight ? 'invuln'
-              : 'sentry';
+              : roll < D.shieldWeight + D.overdriveWeight + D.refillWeight + D.invulnWeight + D.sentryWeight ? 'sentry'
+                : 'mystery';
 
     const base = enemy.group.position.clone();
     base.y = 0;
@@ -582,6 +662,7 @@ export class Game {
     else if (kind === 'overdrive') this.hud.feed('KILL-STREAK DROP — OVERDRIVE CORE DEPLOYED', 'info');
     else if (kind === 'invuln') this.hud.feed('KILL-STREAK DROP — BULWARK CORE DEPLOYED', 'info');
     else if (kind === 'sentry') this.hud.feed('KILL-STREAK DROP — WARDEN TURRET DEPLOYED', 'info');
+    else if (kind === 'mystery') this.hud.feed('KILL-STREAK DROP — MYSTERY CRATE DEPLOYED', 'info');
     else this.hud.feed('KILL-STREAK DROP — AMMO CACHE DEPLOYED', 'info');
   }
 
@@ -602,6 +683,37 @@ export class Game {
       this.sfx.streak(tierIdx);
       this.director.heat = clamp(this.director.heat + S.heatBonus, 0, 1);
     }
+    this.career.track({ bestStreak: this.killTimes.length });
+  }
+
+  private spawnBoss(): void {
+    const a = this.rng.pick(TRAIT_POOL);
+    const b = this.rng.pick(TRAIT_POOL);
+    const spec = {
+      rivalId: `boss-${this.director.wave}`,
+      name: 'THE PITBOSS',
+      tier: 4,
+      traitIds: [a.id, b.id]
+    };
+    const stats = buildStats(
+      4,
+      spec.traitIds,
+      this.director.wave,
+      this.director.aggression(),
+      this.rng,
+      this.mods.enemyHpMul,
+      this.mods.strafeMul
+    );
+    stats.hp *= 2.2;
+    const point = this.arena.randomSpawnPoint(this.rng, this.player.position);
+    const boss = new Enemy(spec, stats, point);
+    boss.addTo(this.scene);
+    this.enemies.push(boss);
+    this.activeRivalIds.add(spec.rivalId);
+    this.bossAlive = true;
+    this.hud.banner('THE PITBOSS APPROACHES');
+    this.hud.feed('THE PITBOSS ENTERS — BRING IT DOWN FOR DOUBLE LOOT', 'rival');
+    this.sfx.surge();
   }
 
   private spawnEnemy(): void {
@@ -628,7 +740,7 @@ export class Game {
     }
   }
 
-  startRun(): void {
+  startRun(daily = false): void {
     if (!this.booted || !this.director) return;
     try {
       this.sfx.unlock();
@@ -637,6 +749,14 @@ export class Game {
       this.activeRivalIds.clear();
       this.effects.clear();
 
+      this.isDailyRun = daily;
+      if (daily) {
+        this.rng.reseed(hashString(`PITBOSS-DAILY-${todayStamp()}`));
+        this.career.bump({ dailyRuns: 1 });
+      } else {
+        this.rng.reseed((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0);
+      }
+
       this.player.reset();
       this.weapon.reset();
       this.pickups.clear();
@@ -644,9 +764,11 @@ export class Game {
       this.sentries.length = 0;
       this.mods.reset();
       this.syncMods();
+      this.waveHealQueue = [];
       (this.scene.fog as THREE.FogExp2).density = CONFIG.variety.fogBase;
       this.hud.setMutator(null, null);
       this.kills = 0;
+      this.bossAlive = false;
       this.shotsFired = 0;
       this.shotsHit = 0;
       this.runStartTime = performance.now();
@@ -661,6 +783,16 @@ export class Game {
       this.lastYaw = this.player.yaw;
       this.lastPitch = this.player.pitch;
       this.director.beginRun();
+
+      const layoutIdx = this.isDailyRun
+        ? hashString(`PITBOSS-DAILY-${todayStamp()}:arena`) % ARENA_LAYOUTS.length
+        : this.rng.int(0, ARENA_LAYOUTS.length);
+      const layoutName = this.arena.setLayout(layoutIdx);
+      this.arenaLayout = layoutIdx;
+      this.hud.feed(
+        daily ? `DAILY RUN — EVERYONE FIGHTS THE SAME PIT TODAY` : `ARENA — ${layoutName}`,
+        'info'
+      );
 
       this.hud.show();
       this.hud.setHp(this.player.hp, this.player.maxHp);
@@ -729,6 +861,56 @@ export class Game {
     this.input.requestLock(this.canvas);
   }
 
+  private saveDailyBest(wave: number): void {
+    try {
+      const key = `pitboss.dailyBest.${todayStamp()}`;
+      const prev = parseInt(localStorage.getItem(key) ?? '0', 10) || 0;
+      if (wave > prev) localStorage.setItem(key, String(wave));
+    } catch {
+      // storage unavailable
+    }
+  }
+
+  readDailyBest(): number {
+    try {
+      return parseInt(localStorage.getItem(`pitboss.dailyBest.${todayStamp()}`) ?? '0', 10) || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private announceMilestone(def: MilestoneDef): void {
+    this.hud.banner(`MILESTONE — ${def.name}`);
+    this.hud.feed(`MILESTONE UNLOCKED — ${def.desc}`, 'info');
+    this.sfx.streak(2);
+  }
+
+  debugSetArena(index: number): string {
+    this.arenaLayout = index;
+    return this.arena.setLayout(index);
+  }
+
+  debugSpawnBoss(): void {
+    this.spawnBoss();
+  }
+
+  debugSpawnMysteryHere(): void {
+    const p = this.player.position.clone();
+    p.x += 0.4;
+    this.pickups.spawnAtPoint('mystery', p);
+  }
+
+  debugCareerCode(): string {
+    return this.career.exportCode(this.settings.exportForCode());
+  }
+
+  debugCareer(): { counters: Record<string, number>; milestones: string[] } {
+    return {
+      counters: { ...this.career.counters },
+      milestones: [...this.career.milestones]
+    };
+  }
+
   private onPlayerDied(killer: Enemy | null): void {
     this.state = 'dead';
     this.input.fireHeld = false;
@@ -773,6 +955,8 @@ export class Game {
     };
     const rank = this.highscores.add(summary);
     if (summary.wave > this.bestWave) this.bestWave = summary.wave;
+    this.career.track({ bestWave: summary.wave });
+    if (this.isDailyRun) this.saveDailyBest(summary.wave);
 
     this.lastDeathData = {
       killerName: record.name,
@@ -783,7 +967,7 @@ export class Game {
       newTier: record.tier,
       newTrait: promoted && newTrait ? newTrait.name : null,
       stats: { wave: summary.wave, kills: summary.kills, accuracy, timeSec },
-      shareCode: encodeRun(summary),
+      shareCode: encodeRun({ ...summary, daily: this.isDailyRun }),
       rank
     };
     this.screens.showDeath(this.lastDeathData);
@@ -831,6 +1015,7 @@ export class Game {
 
   private simulate(dt: number): void {
     this.syncMods();
+    this.weapon.crouched = this.player.crouching;
     this.player.update(dt, this.input, this.arena);
 
     const yawDelta = this.player.yaw - this.lastYaw;
@@ -874,8 +1059,9 @@ export class Game {
       if (result.fired) {
         this.shotsFired++;
         if (result.hitSomething) this.shotsHit++;
-        this.player.pitch += result.recoil;
-        this.viewmodel.kick(Math.min(1.4, result.recoil / 0.013));
+        if (result.killed && result.headshot) this.career.bump({ headshotKills: 1 });
+        this.player.pitch += result.recoil * (this.weapon.crouched ? 0.6 : 1);
+        this.viewmodel.kick(Math.min(1.4, result.recoil / 0.013) * (this.weapon.crouched ? 0.7 : 1));
       }
     }
 
@@ -934,7 +1120,11 @@ export class Game {
         arena: this.arena,
         fx: this.effects,
         sfx: this.sfx,
-        onDamage: (e: Enemy, dmg: number) => this.applyDamageToEnemy(e, dmg)
+        onDamage: (e: Enemy, dmg: number) => {
+          const r = this.applyDamageToEnemy(e, dmg);
+          if (r === 'dead') this.career.bump({ wardenKills: 1 });
+          return r;
+        }
       };
       for (let i = this.sentries.length - 1; i >= 0; i--) {
         const s = this.sentries[i];
@@ -989,6 +1179,7 @@ export class Game {
     }
 
     this.updateDirectorPhase();
+    this.updateWaveHeals();
     this.director.update(dt, {
       hpFrac: this.player.hp / this.player.maxHp,
       accuracy: this.shotsFired > 0 ? this.shotsHit / this.shotsFired : 1,
@@ -1049,13 +1240,51 @@ export class Game {
     this.hud.setHeat(this.director.heat);
   }
 
+  private waveHealQueue: number[] = [];
+
+  /** From wave 5, schedule extra vials mid-wave, scaled to how many rivals the wave will spawn. */
+  private planWaveHeals(wave: number): void {
+    this.waveHealQueue = [];
+    if (wave < CONFIG.variety.midwaveHealWave) return;
+    const extra = Math.min(CONFIG.variety.midwaveHealMax, Math.floor((wave - 3) / 2));
+    const fracs = [0.45, 0.68, 0.88];
+    for (let i = 0; i < extra; i++) {
+      this.waveHealQueue.push(Math.ceil(this.director.quotaTotal * fracs[i]));
+    }
+  }
+
+  private updateWaveHeals(): void {
+    if (this.waveHealQueue.length === 0 || this.director.phase !== 'active') return;
+    const spawned = this.director.spawnedCount;
+    while (this.waveHealQueue.length > 0 && spawned >= this.waveHealQueue[0]) {
+      this.waveHealQueue.shift();
+      this.pickups.spawnAtRandom('heal');
+      this.hud.feed('SUPPLY DROP — MID-WAVE VIAL DEPLOYED', 'info');
+    }
+  }
+
+  debugWaveHealTargets(wave: number): number[] {
+    const prev = this.director.quotaTotal;
+    this.director.quotaTotal = Math.round(CONFIG.director.quotaBase + (wave - 1) * CONFIG.director.quotaPerWave);
+    this.planWaveHeals(wave);
+    const targets = [...this.waveHealQueue];
+    this.director.quotaTotal = prev;
+    this.waveHealQueue = [];
+    return targets;
+  }
+
   private updateDirectorPhase(): void {
     const phase = this.director.phase;
     if (phase !== this.lastPhase) {
       if (phase === 'active') {
         this.lastPhase = phase;
         this.pickups.spawnAtRandom('heal');
-        const mut = this.mods.rollMutator(this.director.wave, this.rng);
+        this.career.track({ bestWave: this.director.wave });
+        if (this.director.wave % 5 === 0) this.spawnBoss();
+        const mut = this.isDailyRun
+          ? this.mods.rollMutator(this.director.wave, RNG.fromSeed(hashString(`PITBOSS-DAILY-${todayStamp()}:w${this.director.wave}`)))
+          : this.mods.rollMutator(this.director.wave, this.rng);
+        this.planWaveHeals(this.director.wave);
         if (mut) {
           this.hud.banner(`MUTATOR — ${mut.name}`);
           this.hud.feed(`${mut.name} — ${mut.desc}`, 'info');
@@ -1105,6 +1334,7 @@ export class Game {
     if (enemy.data.tier >= 2) {
       this.hud.feed(`${enemy.data.name} has fallen. The pit falls silent... briefly.`, 'rival');
     }
+    this.career.bump({ kills: 1 });
     const heal = this.mods.killHealBoon + this.mods.killHealMut;
     if (heal > 0 && this.player.hp > 0) this.player.heal(heal);
     const bounty = this.mods.bountyEvery;
@@ -1114,7 +1344,19 @@ export class Game {
       this.killsSinceDrop = 0;
       this.spawnKillDrop(enemy);
     }
+    if (enemy.data.rivalId.startsWith('boss-')) this.onBossKilled(enemy);
     this.registerStreakKill();
+  }
+
+  private onBossKilled(enemy: Enemy): void {
+    this.bossAlive = false;
+    this.career.bump({ bossKills: 1 });
+    this.player.heal(30);
+    this.spawnKillDrop(enemy);
+    this.spawnKillDrop(enemy);
+    this.hud.banner('PITBOSS DOWN');
+    this.hud.feed('THE PITBOSS FALLS — +30 VITALS · DOUBLE LOOT', 'info');
+    this.sfx.streak(3);
   }
 
   private killsPerDropNow(): number {

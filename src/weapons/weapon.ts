@@ -42,6 +42,8 @@ export class Weapon {
   magSizeMul = 1;
   reloadSpeedMul = 1;
   specialDurAdd = 0;
+  muzzleOverride: number | null = null;
+  crouched = false;
 
   private reloadT = 0;
   private cooldown = 0;
@@ -136,16 +138,18 @@ export class Weapon {
     const spec = this.spec;
     this.cooldown = spec.fireInterval;
     if (!this.freeFire) this.ammo--;
-    this.bloom = Math.min(spec.bloomMax, this.bloom + spec.bloomPerShot);
+    const bloomGain = spec.bloomPerShot * (this.crouched ? 0.5 : 1);
+    this.bloom = Math.min(spec.bloomMax, this.bloom + bloomGain);
     this.playSound(ctx.sfx, spec.sound);
 
     const damage = Math.round(spec.damage * this.damageMul);
 
     if (spec.mode === 'cone') return this.fireCone(origin, baseDir, targets, ctx, damage);
 
+    const tracerColor = this.muzzleOverride ?? spec.tracerColor;
     const wallT = this.castWall(origin, baseDir, ctx.arenaColliders);
     const endPoint = origin.clone().addScaledVector(baseDir, wallT);
-    ctx.effects.muzzleFlash(origin, spec.tracerColor);
+    ctx.effects.muzzleFlash(origin, tracerColor);
 
     let killed = false;
     let hitSomething = false;
@@ -163,7 +167,7 @@ export class Weapon {
           ctx.effects.tracer(
             origin.clone().addScaledVector(dir, 0.6),
             origin.clone().addScaledVector(dir, Math.min(pierceEnd, wallT)),
-            spec.tracerColor, spec.tracerLife, spec.tracerWidth
+            tracerColor, spec.tracerLife, spec.tracerWidth
           );
           for (const h of hits) {
             const dmg = h.headshot ? Math.round(damage * HEADSHOT_MUL) : damage;
@@ -173,7 +177,7 @@ export class Weapon {
           ctx.effects.tracer(
             origin.clone().addScaledVector(dir, 0.6),
             origin.clone().addScaledVector(dir, wallT),
-            spec.tracerColor, spec.tracerLife, spec.tracerWidth
+            tracerColor, spec.tracerLife, spec.tracerWidth
           );
           if (wallT < MAX_RANGE) ctx.effects.impact(endPoint, 0x8a8a94);
         }
@@ -184,7 +188,7 @@ export class Weapon {
           : origin.clone().addScaledVector(baseDir, wallT);
         ctx.effects.tracer(
           origin.clone().addScaledVector(dir, 0.6),
-          end, spec.tracerColor, spec.tracerLife, spec.tracerWidth
+          end, tracerColor, spec.tracerLife, spec.tracerWidth
         );
         if (best) {
           hitSomething = true;
@@ -211,7 +215,7 @@ export class Weapon {
     const spec = this.spec;
     const flatDir = new THREE.Vector3(baseDir.x, 0, baseDir.z).normalize();
     const wallT = this.castWall(origin, baseDir, ctx.arenaColliders);
-    ctx.effects.muzzleFlash(origin, spec.tracerColor);
+    ctx.effects.muzzleFlash(origin, this.muzzleOverride ?? spec.tracerColor);
 
     let killed = false;
     let hitAny = false;
@@ -332,7 +336,7 @@ export class Weapon {
   }
 
   private applySpread(base: THREE.Vector3, spec: WeaponSpec): THREE.Vector3 {
-    const spread = spec.spreadBase + this.bloom;
+    const spread = (spec.spreadBase + this.bloom) * (this.crouched ? 0.55 : 1);
     const dir = base.clone();
     const u = new THREE.Vector3(0, 1, 0);
     if (Math.abs(dir.y) > 0.95) u.set(1, 0, 0);

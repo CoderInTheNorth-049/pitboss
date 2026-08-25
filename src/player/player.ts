@@ -20,6 +20,11 @@ export class Player {
   moveMul = 1;
   jumpMul = 1;
   gravityMul = 1;
+  eyeMul = 1;
+
+  get crouching(): boolean {
+    return this.eyeMul < 0.95;
+  }
 
   private velX = 0;
   private velZ = 0;
@@ -39,11 +44,16 @@ export class Player {
   }
 
   eyePosition(out: THREE.Vector3): THREE.Vector3 {
-    return out.set(this.motor.pos.x, this.motor.pos.y + P.eyeHeight, this.motor.pos.z);
+    return out.set(this.motor.pos.x, this.motor.pos.y + P.eyeHeight * this.eyeMul, this.motor.pos.z);
   }
 
   update(dt: number, input: Input, arena: Arena): void {
     if (this.shieldT > 0) this.shieldT = Math.max(0, this.shieldT - dt);
+    const crouching = input.crouch && this.motor.grounded !== false;
+    const eyeTarget = crouching ? 0.66 : 1;
+    this.eyeMul += (eyeTarget - this.eyeMul) * Math.min(1, dt * 12);
+    if (Math.abs(this.eyeMul - eyeTarget) < 0.005) this.eyeMul = eyeTarget;
+
     const look = input.consumeLook();
     this.yaw -= look.x * 0.0022;
     this.pitch = Math.max(-1.5, Math.min(1.5, this.pitch - look.y * 0.0022));
@@ -57,7 +67,7 @@ export class Player {
     const len = Math.hypot(wx, wz);
     if (len > 1) { wx /= len; wz /= len; }
 
-    const speed = P.speed * this.moveMul * (input.sprint && fwd > 0 ? P.sprintMul : 1);
+    const speed = P.speed * this.moveMul * (input.sprint && fwd > 0 ? P.sprintMul : 1) * (crouching ? 0.55 : 1);
     const targetX = wx * speed;
     const targetZ = wz * speed;
     const rate = len > 0.01 ? P.accel : P.friction;
@@ -92,7 +102,7 @@ export class Player {
     this.camera.quaternion.setFromEuler(e);
     this.camera.position.set(
       this.motor.pos.x,
-      this.motor.pos.y + P.eyeHeight + bobY,
+      this.motor.pos.y + P.eyeHeight * this.eyeMul + bobY,
       this.motor.pos.z
     );
 
@@ -136,6 +146,7 @@ export class Player {
     this.pitch = 0;
     this.shakeT = 0;
     this.bobPhase = 0;
+    this.eyeMul = 1;
     this.shieldFrac = 0;
     this.shieldT = 0;
     this.shieldBudget = 0;

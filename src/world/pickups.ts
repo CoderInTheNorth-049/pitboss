@@ -4,7 +4,7 @@ import type { RNG } from '../utils/rng';
 import type { WeaponSpec } from '../weapons/specs';
 import { SPECIALS } from '../weapons/specs';
 
-export type PickupKind = 'heal' | 'weapon' | 'shield' | 'overdrive' | 'refill' | 'invuln' | 'sentry';
+export type PickupKind = 'heal' | 'weapon' | 'shield' | 'overdrive' | 'refill' | 'invuln' | 'sentry' | 'mystery';
 
 export type PickupEvent =
   | { type: 'heal' }
@@ -14,6 +14,7 @@ export type PickupEvent =
   | { type: 'refill' }
   | { type: 'invuln' }
   | { type: 'sentry'; pos: THREE.Vector3 }
+  | { type: 'mystery'; pos: THREE.Vector3 }
   | { type: 'expired' };
 
 export interface PickupCallbacks {
@@ -26,6 +27,7 @@ const OVERDRIVE_COLOR = 0xff2244;
 const REFILL_COLOR = 0x9dff3f;
 const INVULN_COLOR = 0xffd23f;
 const SENTRY_COLOR = 0xc15cff;
+const MYSTERY_COLOR = 0xff8adf;
 const PICKUP_RADIUS = 1.0;
 
 const LIFE: Record<PickupKind, number> = {
@@ -35,7 +37,8 @@ const LIFE: Record<PickupKind, number> = {
   overdrive: 12,
   refill: 15,
   invuln: 12,
-  sentry: 12
+  sentry: 12,
+  mystery: 15
 };
 
 function colorFor(kind: PickupKind, spec: WeaponSpec | null): number {
@@ -46,6 +49,7 @@ function colorFor(kind: PickupKind, spec: WeaponSpec | null): number {
     case 'refill': return REFILL_COLOR;
     case 'invuln': return INVULN_COLOR;
     case 'sentry': return SENTRY_COLOR;
+    case 'mystery': return MYSTERY_COLOR;
     default: return spec!.tracerColor;
   }
 }
@@ -74,6 +78,7 @@ class Pickup {
       : kind === 'refill' ? this.buildRefill(color)
       : kind === 'invuln' ? this.buildInvuln(color)
       : kind === 'sentry' ? this.buildSentry(color)
+      : kind === 'mystery' ? this.buildMystery(color)
       : this.buildGun(spec!.tracerColor);
     this.core.position.y = 0.75;
     this.group.add(this.core);
@@ -107,6 +112,7 @@ class Pickup {
       case 'overdrive': return { type: 'overdrive' };
       case 'invuln': return { type: 'invuln' };
       case 'sentry': return { type: 'sentry', pos: pos.clone() };
+      case 'mystery': return { type: 'mystery', pos: pos.clone() };
       default: return { type: 'refill' };
     }
   }
@@ -174,6 +180,39 @@ class Pickup {
     eye.position.set(-0.07, 0.31, 0.09);
     g.add(base, column, dome, barrel, eye);
     g.scale.setScalar(1.6);
+    return g;
+  }
+
+  private buildMystery(color: number): THREE.Object3D {
+    const g = new THREE.Group();
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: 0x241f2e,
+      emissive: color,
+      emissiveIntensity: 0.55,
+      roughness: 0.45,
+      metalness: 0.35
+    });
+    const glowMat = new THREE.MeshBasicMaterial({ color, blending: THREE.AdditiveBlending, depthWrite: false });
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.34, 0.42), bodyMat);
+    const lid = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.07, 0.46), glowMat);
+    lid.position.y = 0.2;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 64;
+    const c2 = canvas.getContext('2d')!;
+    c2.fillStyle = '#ff8adf';
+    c2.font = '900 46px "Segoe UI", system-ui, sans-serif';
+    c2.textAlign = 'center';
+    c2.textBaseline = 'middle';
+    c2.fillText('?', 32, 36);
+    const tex = new THREE.CanvasTexture(canvas);
+    const qMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const q1 = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.3), qMat);
+    q1.position.z = 0.22;
+    const q2 = q1.clone();
+    q2.rotation.y = Math.PI;
+    q2.position.z = -0.22;
+    g.add(crate, lid, q1, q2);
+    g.scale.setScalar(1.55);
     return g;
   }
 

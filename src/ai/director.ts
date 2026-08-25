@@ -19,6 +19,11 @@ export class Director {
   wave = 1;
   heat = 0.12;
   phase: 'intermission' | 'active' = 'intermission';
+  quotaTotal = 0;
+
+  get spawnedCount(): number {
+    return this.quotaTotal - this.quotaLeft;
+  }
 
   private intermissionT = 3.0;
   private spawnCd = 1.2;
@@ -112,6 +117,7 @@ export class Director {
   private startWave(): void {
     this.phase = 'active';
     this.quotaLeft = Math.round((D.quotaBase + (this.wave - 1) * D.quotaPerWave) * this.quotaMulFn());
+    this.quotaTotal = this.quotaLeft;
     this.spawnCd = 0.4;
     this.announce(`WAVE ${this.wave}`, 'wave');
   }
