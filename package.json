@@ -12,6 +12,7 @@
     "test:features": "node tests/features.mjs",
     "test:settings": "node tests/settings.mjs",
     "test:variety": "node tests/variety.mjs",
+    "test:progression": "node tests/progression.mjs",
     "test:decode": "node tests/decode.mjs",
     "test:regression": "node tests/regression.mjs",
     "test:hall": "node tests/hall.mjs"

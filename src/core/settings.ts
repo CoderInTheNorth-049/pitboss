@@ -1,4 +1,4 @@
-export type Action = 'forward' | 'back' | 'left' | 'right' | 'jump' | 'sprint' | 'reload' | 'fire';
+export type Action = 'forward' | 'back' | 'left' | 'right' | 'jump' | 'sprint' | 'reload' | 'fire' | 'crouch';
 
 export interface ActionDef {
   id: Action;
@@ -12,6 +12,7 @@ export const ACTIONS: readonly ActionDef[] = [
   { id: 'right', label: 'STRAFE RIGHT' },
   { id: 'jump', label: 'JUMP' },
   { id: 'sprint', label: 'SPRINT' },
+  { id: 'crouch', label: 'CROUCH' },
   { id: 'reload', label: 'RELOAD' },
   { id: 'fire', label: 'FIRE' }
 ];
@@ -25,6 +26,7 @@ export interface AccessSettings {
   volume: number;
   reducedFlash: boolean;
   crosshairScale: number;
+  muzzle: string;
 }
 
 export const DEFAULT_BINDINGS: Bindings = {
@@ -34,6 +36,7 @@ export const DEFAULT_BINDINGS: Bindings = {
   right: 'KeyD',
   jump: 'Space',
   sprint: 'ShiftLeft',
+  crouch: 'KeyC',
   reload: 'KeyR',
   fire: 'Mouse0'
 };
@@ -44,8 +47,29 @@ export const DEFAULT_ACCESS: AccessSettings = {
   fov: 78,
   volume: 1,
   reducedFlash: false,
-  crosshairScale: 1
+  crosshairScale: 1,
+  muzzle: 'default'
 };
+
+export interface MuzzleStyle {
+  id: string;
+  name: string;
+  color: number | null;
+  css: string | null;
+  requires: string;
+}
+
+export const MUZZLE_STYLES: readonly MuzzleStyle[] = [
+  { id: 'default', name: 'STANDARD', color: null, css: null, requires: '' },
+  { id: 'ember',   name: 'EMBER',    color: 0xff7a3c, css: '#ff7a3c', requires: 'wave5' },
+  { id: 'void',    name: 'VOID',     color: 0x9a5cff, css: '#9a5cff', requires: 'bossdown' },
+  { id: 'toxin',   name: 'TOXIN',    color: 0x9dff3f, css: '#9dff3f', requires: 'heads50' },
+  { id: 'gold',    name: 'GOLD',     color: 0xffd23f, css: '#ffd23f', requires: 'cratejackpot' }
+];
+
+function clampNum(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, v));
+}
 
 const STORE_KEY = 'pitboss.settings.v1';
 
@@ -122,6 +146,50 @@ export class Settings {
     this.access = { ...this.access, ...patch };
     this.save();
     this.emit();
+  }
+
+  /** Compact portable snapshot: bindings + accessibility + style. Segment contains no '-'. */
+  exportForCode(): string {
+    const a = this.access;
+    const binds = ACTIONS.map(act => this.bindings[act.id]).join('.');
+    const nums = [
+      Math.round(a.mouseSens * 100),
+      Math.round(a.fov),
+      Math.round(a.volume * 100),
+      Math.round(a.crosshairScale * 100),
+      a.reducedFlash ? 1 : 0,
+      a.invertY ? 1 : 0
+    ].join('.');
+    return `${binds}.${nums}.${a.muzzle}`;
+  }
+
+  /** Apply a snapshot from exportForCode(). Returns false if malformed. */
+  importFromCode(segment: string): boolean {
+    const parts = segment.split('.');
+    if (parts.length !== ACTIONS.length + 7) return false;
+    const bindCount = ACTIONS.length;
+    const binds = parts.slice(0, bindCount);
+    if (binds.some(b => !/^[A-Za-z0-9]{1,20}$/.test(b))) return false;
+    const nums = parts.slice(bindCount, bindCount + 6).map(n => parseInt(n, 10));
+    if (nums.some(n => Number.isNaN(n))) return false;
+    const muzzle = parts[bindCount + 6];
+    if (!MUZZLE_STYLES.some(m => m.id === muzzle)) return false;
+    const [sens, fov, vol, cross, flash, invert] = nums;
+    const nextBindings: Partial<Bindings> = {};
+    ACTIONS.forEach((act, i) => { nextBindings[act.id] = binds[i]; });
+    this.bindings = { ...this.bindings, ...nextBindings };
+    this.access = {
+      mouseSens: clampNum(sens / 100, 0.3, 3),
+      fov: clampNum(fov, 70, 110),
+      volume: clampNum(vol / 100, 0, 1),
+      crosshairScale: clampNum(cross / 100, 0.6, 1.8),
+      reducedFlash: flash === 1,
+      invertY: invert === 1,
+      muzzle
+    };
+    this.save();
+    this.emit();
+    return true;
   }
 
   private load(): void {

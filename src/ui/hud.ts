@@ -4,7 +4,6 @@ export class Hud {
   private root = document.getElementById('hud')!;
   private crosshair = document.getElementById('crosshair')!;
   private hpFill = document.getElementById('hp-fill')!;
-  private hpBar = document.getElementById('hp-bar')!;
   private ammoCount = document.getElementById('ammo-count')!;
   private reloadHint = document.getElementById('reload-hint')!;
   private waveNum = document.getElementById('wave-num')!;
@@ -31,6 +30,24 @@ export class Hud {
   private mutatorChip = document.getElementById('mutator-chip')!;
   private vignetteTimer: number | undefined;
   reducedFlash = false;
+  private last = {
+    ammo: -1,
+    reloading: false as boolean | null,
+    wave: -1,
+    heat: -1,
+    special: '',
+    shield: '',
+    boost: '',
+    invuln: '' as string | number,
+    hp: -1
+  };
+
+  private setWidth(el: HTMLElement, frac: number, key: 'hp' | 'heat'): void {
+    const pct = Math.round(Math.max(0, Math.min(1, frac)) * 200) / 2;
+    if (this.last[key] === pct) return;
+    this.last[key] = pct;
+    el.style.width = `${pct}%`;
+  }
 
   private bannerTimer = 0;
   private bannerQueue: string[] = [];
@@ -42,7 +59,17 @@ export class Hud {
     this.crosshair.style.transform = `scale(${Math.max(0.2, scale)})`;
   }
 
+  setCrosshairColor(css: string | null): void {
+    const ring = this.crosshair.querySelector('.ch-ring') as HTMLElement | null;
+    const dot = this.crosshair.querySelector('.ch-dot') as HTMLElement | null;
+    if (ring) ring.style.borderColor = css ?? 'rgba(232, 230, 224, 0.55)';
+    if (dot) dot.style.background = css ?? 'var(--accent)';
+  }
+
   setSpecial(name: string | null, frac: number, seconds: number): void {
+    const sig = `${name}|${Math.round(frac * 100)}`;
+    if (sig === this.last.special) return;
+    this.last.special = sig;
     if (name === null) {
       this.specialWrap.classList.add('hidden');
       return;
@@ -53,6 +80,9 @@ export class Hud {
   }
 
   setShield(frac: number, seconds: number): void {
+    const sig = `${Math.round(frac * 100)}|${seconds.toFixed(1)}`;
+    if (sig === this.last.shield) return;
+    this.last.shield = sig;
     if (frac <= 0) {
       this.shieldWrap.classList.add('hidden');
       return;
@@ -64,6 +94,9 @@ export class Hud {
   }
 
   setBoost(name: string | null, frac: number, seconds: number): void {
+    const sig = `${name}|${Math.round(frac * 100)}`;
+    if (sig === this.last.boost) return;
+    this.last.boost = sig;
     if (name === null) {
       this.boostWrap.classList.add('hidden');
       return;
@@ -74,6 +107,9 @@ export class Hud {
   }
 
   setInvuln(frac: number): void {
+    const sig = frac <= 0 ? 'off' : `on${Math.round(frac * 50)}`;
+    if (sig === this.last.invuln) return;
+    this.last.invuln = sig;
     if (frac <= 0) {
       this.invulnWrap.classList.add('hidden');
       return;
@@ -97,23 +133,26 @@ export class Hud {
   }
 
   setHp(cur: number, max: number): void {
-    const frac = clamp(cur / max, 0, 1);
-    this.hpFill.style.width = `${frac * 100}%`;
-    this.hpFill.classList.toggle('low', frac < 0.35);
-    void this.hpBar;
+    this.setWidth(this.hpFill, cur / max, 'hp');
+    this.hpFill.classList.toggle('low', cur / max < 0.35);
   }
 
   setAmmo(ammo: number, reloading: boolean): void {
+    if (ammo === this.last.ammo && reloading === this.last.reloading) return;
+    this.last.ammo = ammo;
+    this.last.reloading = reloading;
     this.ammoCount.textContent = String(ammo);
     this.reloadHint.classList.toggle('hidden', !reloading);
   }
 
   setWave(wave: number): void {
+    if (wave === this.last.wave) return;
+    this.last.wave = wave;
     this.waveNum.textContent = String(wave);
   }
 
   setHeat(heat: number): void {
-    this.heatFill.style.width = `${clamp(heat, 0, 1) * 100}%`;
+    this.setWidth(this.heatFill, heat, 'heat');
   }
 
   feed(text: string, cls: '' | 'rival' | 'info' = ''): void {

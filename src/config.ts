@@ -66,11 +66,12 @@ export const CONFIG = {
   },
   drops: {
     killsPerDrop: 8,
-    shieldWeight: 42,
-    overdriveWeight: 26,
-    refillWeight: 17,
-    invulnWeight: 10,
-    sentryWeight: 13,
+    shieldWeight: 38,
+    overdriveWeight: 24,
+    refillWeight: 15,
+    invulnWeight: 9,
+    sentryWeight: 12,
+    mysteryWeight: 8,
     shieldAbsorbMin: 0.65,
     shieldAbsorbMax: 0.8,
     shieldDuration: 10,
@@ -111,6 +112,8 @@ export const CONFIG = {
     fogBase: 0.016,
     fogDark: 0.05,
     draftChoices: 3,
-    skipHeal: 25
+    skipHeal: 25,
+    midwaveHealWave: 5,
+    midwaveHealMax: 3
   }
 } as const;

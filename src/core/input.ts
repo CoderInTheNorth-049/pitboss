@@ -19,6 +19,10 @@ export class Input {
     return this.settings !== null && this.keys.has(this.settings.bindings.sprint);
   }
 
+  get crouch(): boolean {
+    return this.settings !== null && this.keys.has(this.settings.bindings.crouch);
+  }
+
   onLockFail: () => void = () => {};
 
   applySettings(settings: Settings): void {

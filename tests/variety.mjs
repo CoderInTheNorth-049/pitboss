@@ -84,7 +84,8 @@ s = await page.evaluate(() => ({
 console.log('DRAFT OPEN:', JSON.stringify(s));
 if (s.state !== 'draft' || s.cards !== 3) { console.log('FAIL: draft open/cards'); process.exit(1); }
 
-const boonCountBefore = await page.evaluate(() => window.__PITBOSS.debugState().boons.length);
+const stacksBefore = await page.evaluate(() =>
+  window.__PITBOSS.debugState().boons.reduce((a, b) => a + b.stacks, 0));
 await page.click('#boon-cards .boon-card:nth-child(1)');
 await sleep(300);
 s = await page.evaluate(() => ({
@@ -93,7 +94,8 @@ s = await page.evaluate(() => ({
 }));
 console.log('BOON PICKED:', JSON.stringify(s));
 if (s.state !== 'playing' || !s.draftHidden) { console.log('FAIL: draft pick flow'); process.exit(1); }
-if (s.boons.length !== boonCountBefore + 1) { console.log('FAIL: boon not applied'); process.exit(1); }
+const stacksAfter = s.boons.reduce((a, b) => a + b.stacks, 0);
+if (stacksAfter !== stacksBefore + 1) { console.log(`FAIL: boon not applied (${stacksBefore} -> ${stacksAfter})`); process.exit(1); }
 
 await page.evaluate(() => { const g = window.__PITBOSS; g.debugSetHp(50); g.debugOpenDraft(); });
 await sleep(300);
@@ -144,6 +146,46 @@ s = await page.evaluate(() => ({
 }));
 console.log('START PAGE VARIETY INFO:', JSON.stringify(s));
 if (s.chips !== 7 || !s.rvTitle.includes('EVERY RUN FIGHTS DIFFERENT')) { console.log('FAIL: start page variety info'); process.exit(1); }
+
+// --- MID-WAVE HEAL VIALS (wave 5+, scaled to quota) ---
+const plan5 = await page.evaluate(() => window.__PITBOSS.debugWaveHealTargets(5));
+const plan9 = await page.evaluate(() => window.__PITBOSS.debugWaveHealTargets(9));
+const plan3 = await page.evaluate(() => window.__PITBOSS.debugWaveHealTargets(3));
+console.log('HEAL PLANS w5/w9/w3:', JSON.stringify(plan5), JSON.stringify(plan9), JSON.stringify(plan3));
+if (plan5.length !== 1 || plan9.length !== 3 || plan3.length !== 0) { console.log('FAIL: heal plans'); process.exit(1); }
+
+const healDrop = await page.evaluate(async () => {
+  const g = window.__PITBOSS;
+  if (g.debugState().state !== 'playing') { window.__PITBOSS.startRun(); }
+  g.debugSetHp(100);
+  g['director'].wave = 5;
+  g['director'].phase = 'active';
+  g['director'].lastPhase = 'active';
+  g['director'].quotaTotal = 13;
+  g['director'].quotaLeft = 7; // 6 spawned -> first threshold hit
+  g['planWaveHeals'](5);
+  const before = g['pickups'].count;
+  await new Promise(r => setTimeout(r, 400));
+  return {
+    before,
+    after: g['pickups'].count,
+    fed: [...document.querySelectorAll('.feed-item')].some(f => f.textContent.includes('MID-WAVE VIAL'))
+  };
+});
+console.log('MID-WAVE VIAL:', JSON.stringify(healDrop));
+if (!(healDrop.after > healDrop.before) || !healDrop.fed) {
+  const diag = await page.evaluate(() => ({
+    state: window.__PITBOSS.debugState().state,
+    phase: window.__PITBOSS['director'].phase,
+    wave: window.__PITBOSS['director'].wave,
+    queue: [...window.__PITBOSS['waveHealQueue']],
+    spawned: window.__PITBOSS['director'].spawnedCount,
+    feeds: [...document.querySelectorAll('.feed-item')].map(f => f.textContent).slice(0, 3)
+  }));
+  console.log('HEAL DIAG:', JSON.stringify(diag));
+  console.log('FAIL: mid-wave vial drop');
+  process.exit(1);
+}
 
 console.log('PAGE ERRORS:', errors.length);
 console.log('VARIETY PASS');
